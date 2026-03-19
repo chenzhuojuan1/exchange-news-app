@@ -64,18 +64,6 @@ async function ensureTables(conn: mysql.Connection): Promise<void> {
       \`createdAt\` timestamp NOT NULL DEFAULT (now()),
       CONSTRAINT \`favorites_id\` PRIMARY KEY(\`id\`)
     )`,
-    // Ensure columns added in later migrations exist (ALTER TABLE IF NOT EXISTS column)
-    // scrape_jobs: add articlesFiltered if missing
-    `ALTER TABLE \`scrape_jobs\` ADD COLUMN IF NOT EXISTS \`articlesFiltered\` int NOT NULL DEFAULT 0`,
-    // news_articles: add titleDisplay and titleChinese if missing
-    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`titleDisplay\` varchar(200)`,
-    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`titleChinese\` text`,
-    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`summary\` text`,
-    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`isRelevant\` int NOT NULL DEFAULT 1`,
-    // keywords: add isActive if missing
-    `ALTER TABLE \`keywords\` ADD COLUMN IF NOT EXISTS \`isActive\` int NOT NULL DEFAULT 1`,
-    // favorites: add note if missing
-    `ALTER TABLE \`favorites\` ADD COLUMN IF NOT EXISTS \`note\` text`,
   ];
   for (const stmt of statements) {
     try {
@@ -84,6 +72,45 @@ async function ensureTables(conn: mysql.Connection): Promise<void> {
       console.warn("[Database] Table creation warning:", (err as Error).message);
     }
   }
+
+  // Ensure columns added in later migrations exist
+  // Use INFORMATION_SCHEMA to check existence first (avoids IF NOT EXISTS syntax incompatibility)
+  const columnChecks: Array<{ table: string; column: string; ddl: string }> = [
+    { table: 'scrape_jobs', column: 'articlesFiltered', ddl: 'ALTER TABLE `scrape_jobs` ADD COLUMN `articlesFiltered` int NOT NULL DEFAULT 0' },
+    { table: 'news_articles', column: 'titleDisplay', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `titleDisplay` varchar(200)' },
+    { table: 'news_articles', column: 'titleChinese', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `titleChinese` text' },
+    { table: 'news_articles', column: 'summary', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `summary` text' },
+    { table: 'news_articles', column: 'isRelevant', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `isRelevant` int NOT NULL DEFAULT 1' },
+    { table: 'keywords', column: 'isActive', ddl: 'ALTER TABLE `keywords` ADD COLUMN `isActive` int NOT NULL DEFAULT 1' },
+    { table: 'favorites', column: 'note', ddl: 'ALTER TABLE `favorites` ADD COLUMN `note` text' },
+  ];
+
+  // Get database name from connection
+  let dbName = '';
+  try {
+    const [rows] = await conn.execute('SELECT DATABASE() as db') as any;
+    dbName = rows[0]?.db || '';
+  } catch (e) {
+    console.warn('[Database] Could not get database name:', (e as Error).message);
+  }
+
+  for (const { table, column, ddl } of columnChecks) {
+    try {
+      // Check if column exists via INFORMATION_SCHEMA
+      const [existing] = await conn.execute(
+        `SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+        [table, column]
+      ) as any;
+      const count = existing[0]?.cnt ?? existing[0]?.['COUNT(*)'] ?? 0;
+      if (Number(count) === 0) {
+        await conn.execute(ddl);
+        console.log(`[Database] Added column ${table}.${column}`);
+      }
+    } catch (err) {
+      console.warn(`[Database] Column check/add warning for ${table}.${column}:`, (err as Error).message);
+    }
+  }
+
   _ensuredTables = true;
   console.log("[Database] All tables ensured");
 }
