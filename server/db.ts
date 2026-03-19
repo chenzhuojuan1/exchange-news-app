@@ -64,6 +64,18 @@ async function ensureTables(conn: mysql.Connection): Promise<void> {
       \`createdAt\` timestamp NOT NULL DEFAULT (now()),
       CONSTRAINT \`favorites_id\` PRIMARY KEY(\`id\`)
     )`,
+    // Ensure columns added in later migrations exist (ALTER TABLE IF NOT EXISTS column)
+    // scrape_jobs: add articlesFiltered if missing
+    `ALTER TABLE \`scrape_jobs\` ADD COLUMN IF NOT EXISTS \`articlesFiltered\` int NOT NULL DEFAULT 0`,
+    // news_articles: add titleDisplay and titleChinese if missing
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`titleDisplay\` varchar(200)`,
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`titleChinese\` text`,
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`summary\` text`,
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`isRelevant\` int NOT NULL DEFAULT 1`,
+    // keywords: add isActive if missing
+    `ALTER TABLE \`keywords\` ADD COLUMN IF NOT EXISTS \`isActive\` int NOT NULL DEFAULT 1`,
+    // favorites: add note if missing
+    `ALTER TABLE \`favorites\` ADD COLUMN IF NOT EXISTS \`note\` text`,
   ];
   for (const stmt of statements) {
     try {
