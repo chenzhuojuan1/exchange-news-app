@@ -1,18 +1,80 @@
 import { eq, and, gte, lte, desc, sql, count } from "drizzle-orm";
 import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
-import { migrate } from "drizzle-orm/mysql2/migrator";
 import mysql from "mysql2/promise";
-import path from "path";
-import { fileURLToPath } from "url";
 import { InsertUser, users, newsArticles, scrapeJobs, keywords, favorites, type InsertNewsArticle } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: MySql2Database | null = null;
-let _migrated = false;
+let _connection: mysql.Connection | null = null;
+let _ensuredTables = false;
 
-// Resolve the drizzle migrations folder relative to this file
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_FOLDER = path.resolve(__dirname, "../drizzle");
+// Ensure all required tables exist using CREATE TABLE IF NOT EXISTS
+async function ensureTables(conn: mysql.Connection): Promise<void> {
+  if (_ensuredTables) return;
+  const statements = [
+    `CREATE TABLE IF NOT EXISTS \`users\` (
+      \`id\` int AUTO_INCREMENT NOT NULL,
+      \`openId\` varchar(64) NOT NULL,
+      \`name\` text,
+      \`email\` varchar(320),
+      \`loginMethod\` varchar(64),
+      \`role\` enum('user','admin') NOT NULL DEFAULT 'user',
+      \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+      \`updatedAt\` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+      \`lastSignedIn\` timestamp NOT NULL DEFAULT (now()),
+      CONSTRAINT \`users_id\` PRIMARY KEY(\`id\`),
+      CONSTRAINT \`users_openId_unique\` UNIQUE(\`openId\`)
+    )`,
+    `CREATE TABLE IF NOT EXISTS \`news_articles\` (
+      \`id\` int AUTO_INCREMENT NOT NULL,
+      \`title\` text NOT NULL,
+      \`titleDisplay\` varchar(200),
+      \`titleChinese\` text,
+      \`publishDate\` varchar(10) NOT NULL,
+      \`url\` varchar(1024) NOT NULL,
+      \`matchedKeywords\` text NOT NULL,
+      \`summary\` text,
+      \`isRelevant\` int NOT NULL DEFAULT 1,
+      \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+      CONSTRAINT \`news_articles_id\` PRIMARY KEY(\`id\`),
+      CONSTRAINT \`news_articles_url_unique\` UNIQUE(\`url\`)
+    )`,
+    `CREATE TABLE IF NOT EXISTS \`scrape_jobs\` (
+      \`id\` int AUTO_INCREMENT NOT NULL,
+      \`startDate\` varchar(10) NOT NULL,
+      \`endDate\` varchar(10) NOT NULL,
+      \`articlesFound\` int NOT NULL DEFAULT 0,
+      \`articlesFiltered\` int NOT NULL DEFAULT 0,
+      \`status\` varchar(20) NOT NULL DEFAULT 'completed',
+      \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+      CONSTRAINT \`scrape_jobs_id\` PRIMARY KEY(\`id\`)
+    )`,
+    `CREATE TABLE IF NOT EXISTS \`keywords\` (
+      \`id\` int AUTO_INCREMENT NOT NULL,
+      \`keyword\` varchar(100) NOT NULL,
+      \`isActive\` int NOT NULL DEFAULT 1,
+      \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+      CONSTRAINT \`keywords_id\` PRIMARY KEY(\`id\`),
+      CONSTRAINT \`keywords_keyword_unique\` UNIQUE(\`keyword\`)
+    )`,
+    `CREATE TABLE IF NOT EXISTS \`favorites\` (
+      \`id\` int AUTO_INCREMENT NOT NULL,
+      \`articleId\` int NOT NULL,
+      \`note\` text,
+      \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+      CONSTRAINT \`favorites_id\` PRIMARY KEY(\`id\`)
+    )`,
+  ];
+  for (const stmt of statements) {
+    try {
+      await conn.execute(stmt);
+    } catch (err) {
+      console.warn("[Database] Table creation warning:", (err as Error).message);
+    }
+  }
+  _ensuredTables = true;
+  console.log("[Database] All tables ensured");
+}
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
@@ -21,25 +83,17 @@ export async function getDb() {
       const connection = await mysql.createConnection({
         uri: process.env.DATABASE_URL,
         ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
-        multipleStatements: true,
       });
+      _connection = connection;
       _db = drizzle(connection);
       console.log("[Database] Connected successfully");
 
-      // Auto-run migrations on first connect
-      if (!_migrated) {
-        try {
-          await migrate(_db, { migrationsFolder: MIGRATIONS_FOLDER });
-          _migrated = true;
-          console.log("[Database] Migrations applied successfully");
-        } catch (migrateErr) {
-          console.warn("[Database] Migration warning (tables may already exist):", (migrateErr as Error).message);
-          _migrated = true; // Don't retry on every call
-        }
-      }
+      // Ensure all tables exist on first connect
+      await ensureTables(connection);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
+      _connection = null;
     }
   }
   return _db;
