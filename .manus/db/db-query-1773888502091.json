@@ -1,0 +1,9 @@
+{
+  "query": "INSERT INTO `keywords` (`keyword`) VALUES ('NASDAQ'), ('NYSE'), ('SEC'), ('LSEG'), ('FCA'), ('JPX'), ('Deutsche'), ('TMX'), ('SGX'), ('HKEX'), ('SFC'), ('KRX'), ('Saudi'), ('ADX'), ('RBI'), ('EURONEXT'), ('SIX'), ('DFM'), ('ESMA'), ('MAS');",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3XaMYSBRWmxifaT.root --database HNu5hem8gTpuSGqNC7n7RD --execute INSERT INTO `keywords` (`keyword`) VALUES ('NASDAQ'), ('NYSE'), ('SEC'), ('LSEG'), ('FCA'), ('JPX'), ('Deutsche'), ('TMX'), ('SGX'), ('HKEX'), ('SFC'), ('KRX'), ('Saudi'), ('ADX'), ('RBI'), ('EURONEXT'), ('SIX'), ('DFM'), ('ESMA'), ('MAS');",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 89
+}

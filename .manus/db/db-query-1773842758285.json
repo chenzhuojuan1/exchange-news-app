@@ -1,0 +1,9 @@
+{
+  "query": "DELETE FROM news_articles; DELETE FROM scrape_jobs;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3XaMYSBRWmxifaT.root --database HNu5hem8gTpuSGqNC7n7RD --execute DELETE FROM news_articles; DELETE FROM scrape_jobs;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 102
+}

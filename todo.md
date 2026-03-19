@@ -1,0 +1,47 @@
+# Project TODO
+
+- [x] Database schema for news articles (title, date, url, translation, keywords, etc.)
+- [x] Backend scraper: fetch news from mondovisione.com with keyword filtering
+- [x] Backend scraper: intelligent filtering to exclude irrelevant news (HR, financial reports, etc.)
+- [x] Backend LLM integration: translate news titles to Chinese using OpenAI API
+- [x] tRPC routes: get yesterday's news (with weekend logic for Monday)
+- [x] tRPC routes: get news by date range
+- [x] tRPC routes: get all news with pagination
+- [x] tRPC routes: trigger manual scrape
+- [x] tRPC routes: scrape by date range
+- [x] tRPC routes: get statistics (total count, keyword distribution, daily counts)
+- [x] tRPC routes: send email with filtered news
+- [x] Frontend: global layout and navigation design
+- [x] Frontend: yesterday's news tab with auto weekend logic
+- [x] Frontend: date range filter tab
+- [x] Frontend: all news tab with pagination
+- [x] Frontend: statistics modal/panel
+- [x] Frontend: manual scrape button
+- [x] Frontend: email send button with preview
+- [x] Frontend: responsive design
+- [x] Vitest tests for backend routes
+- [x] SMTP邮件配置：添加SMTP_HOST、SMTP_PORT、SMTP_USER、SMTP_PASS环境变量
+- [x] SMTP邮件配置：验证邮件发送至chenhzuojuan1@qq.com
+- [x] 定时自动抓取：实现cron job每工作日早上8:30自动触发新闻抓取
+- [x] 定时自动抓取：抓取后自动发送邮件
+- [x] 关键词管理：数据库表存储关键词
+- [x] 关键词管理：后端CRUD API
+- [x] 关键词管理：前端管理界面（添加/删除关键词）
+- [x] 关键词管理：scraper使用数据库中的关键词替代硬编码
+- [x] 新功能的vitest测试
+- [x] 历史新闻抓取：日期筛选查询无结果时自动触发该日期范围的抓取
+- [x] 历史新闻抓取：前端显示"正在抓取历史新闻"加载状态
+- [x] 报告生成：新闻列表添加复选框勾选功能
+- [x] 报告生成：后端API访问新闻原文链接提取详细内容
+- [x] 报告生成：LLM生成结构化中文报告（400字/条，一是二是三是格式）
+- [x] 报告生成：新闻自动分类为监管动向/市场动态/金融科技三大类
+- [x] 报告生成：前端报告预览和下载界面
+- [x] 新功能vitest测试
+- [x] 报告导出Word：后端API将报告Markdown转换为.docx文件
+- [x] 报告导出Word：前端报告预览界面添加"导出Word"按钮
+- [x] 报告导出Word：vitest测试
+- [x] 新闻收藏：数据库表存储收藏记录
+- [x] 新闻收藏：后端收藏/取消收藏API
+- [x] 新闻收藏：前端收藏按钮和收藏列表页面
+- [x] 新功能vitest测试
+- [ ] 项目文件打包提供下载

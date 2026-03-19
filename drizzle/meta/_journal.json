@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1773841671664,
+      "tag": "0000_smart_stature",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1773841820642,
+      "tag": "0001_moaning_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1773887911507,
+      "tag": "0002_unknown_meteorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1773891349656,
+      "tag": "0003_orange_retro_girl",
+      "breakpoints": true
+    }
+  ]
+}
