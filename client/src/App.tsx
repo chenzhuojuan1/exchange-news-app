@@ -1,6 +1,7 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
+import PasswordGate from "@/pages/PasswordGate";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -26,7 +27,9 @@ function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster richColors position="top-right" />
-          <Router />
+          <PasswordGate>
+            <Router />
+          </PasswordGate>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

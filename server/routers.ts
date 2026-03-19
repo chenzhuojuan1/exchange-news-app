@@ -1,5 +1,6 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
+import { ENV } from "./_core/env";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
@@ -249,6 +250,22 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    // Check if site password protection is enabled
+    passwordRequired: publicProcedure.query(() => {
+      return { required: Boolean(ENV.accessPassword) };
+    }),
+    // Verify site access password
+    verifyPassword: publicProcedure
+      .input(z.object({ password: z.string() }))
+      .mutation(({ input }) => {
+        if (!ENV.accessPassword) {
+          return { success: true };
+        }
+        if (input.password === ENV.accessPassword) {
+          return { success: true };
+        }
+        return { success: false, error: "密码错误，请重试" };
+      }),
   }),
 
   news: router({
