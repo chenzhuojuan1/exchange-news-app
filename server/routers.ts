@@ -359,6 +359,17 @@ export const appRouter = router({
         return { html: emailHtml, articleCount: articles.length };
       }),
   }),
+  // ─── Debug ───────────────────────────────────────────────────
+  debug: router({
+    envCheck: publicProcedure.query(() => {
+      return {
+        hasGeminiKey: !!(process.env.GEMINI_API_KEY),
+        hasOpenAiKey: !!(process.env.OPENAI_API_KEY),
+        hasForgeKey: !!(process.env.BUILT_IN_FORGE_API_KEY),
+        geminiKeyPrefix: process.env.GEMINI_API_KEY?.slice(0, 8) ?? "(not set)",
+      };
+    }),
+  }),
   // ─── Report generation ────────────────────────────────────────
   report: router({
     generate: publicProcedure
