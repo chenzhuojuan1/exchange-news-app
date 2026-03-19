@@ -1,10 +1,18 @@
 import { eq, and, gte, lte, desc, sql, count } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
+import { drizzle, type MySql2Database } from "drizzle-orm/mysql2";
+import { migrate } from "drizzle-orm/mysql2/migrator";
 import mysql from "mysql2/promise";
+import path from "path";
+import { fileURLToPath } from "url";
 import { InsertUser, users, newsArticles, scrapeJobs, keywords, favorites, type InsertNewsArticle } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
-let _db: ReturnType<typeof drizzle> | null = null;
+let _db: MySql2Database | null = null;
+let _migrated = false;
+
+// Resolve the drizzle migrations folder relative to this file
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MIGRATIONS_FOLDER = path.resolve(__dirname, "../drizzle");
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
@@ -13,9 +21,22 @@ export async function getDb() {
       const connection = await mysql.createConnection({
         uri: process.env.DATABASE_URL,
         ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
+        multipleStatements: true,
       });
       _db = drizzle(connection);
       console.log("[Database] Connected successfully");
+
+      // Auto-run migrations on first connect
+      if (!_migrated) {
+        try {
+          await migrate(_db, { migrationsFolder: MIGRATIONS_FOLDER });
+          _migrated = true;
+          console.log("[Database] Migrations applied successfully");
+        } catch (migrateErr) {
+          console.warn("[Database] Migration warning (tables may already exist):", (migrateErr as Error).message);
+          _migrated = true; // Don't retry on every call
+        }
+      }
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
@@ -145,17 +166,22 @@ export async function getNewsByDateRange(
 ): Promise<typeof newsArticles.$inferSelect[]> {
   const db = await getDb();
   if (!db) return [];
-  return db
-    .select()
-    .from(newsArticles)
-    .where(
-      and(
-        gte(newsArticles.publishDate, startDate),
-        lte(newsArticles.publishDate, endDate),
-        eq(newsArticles.isRelevant, 1)
+  try {
+    return await db
+      .select()
+      .from(newsArticles)
+      .where(
+        and(
+          gte(newsArticles.publishDate, startDate),
+          lte(newsArticles.publishDate, endDate),
+          eq(newsArticles.isRelevant, 1)
+        )
       )
-    )
-    .orderBy(desc(newsArticles.publishDate));
+      .orderBy(desc(newsArticles.publishDate));
+  } catch (error) {
+    console.warn("[DB] getNewsByDateRange failed:", (error as Error).message);
+    return [];
+  }
 }
 
 export async function getAllNews(
@@ -164,21 +190,26 @@ export async function getAllNews(
 ): Promise<{ items: typeof newsArticles.$inferSelect[]; total: number }> {
   const db = await getDb();
   if (!db) return { items: [], total: 0 };
-  const offset = (page - 1) * pageSize;
-  const [items, totalResult] = await Promise.all([
-    db
-      .select()
-      .from(newsArticles)
-      .where(eq(newsArticles.isRelevant, 1))
-      .orderBy(desc(newsArticles.publishDate))
-      .limit(pageSize)
-      .offset(offset),
-    db
-      .select({ count: count() })
-      .from(newsArticles)
-      .where(eq(newsArticles.isRelevant, 1)),
-  ]);
-  return { items, total: totalResult[0]?.count || 0 };
+  try {
+    const offset = (page - 1) * pageSize;
+    const [items, totalResult] = await Promise.all([
+      db
+        .select()
+        .from(newsArticles)
+        .where(eq(newsArticles.isRelevant, 1))
+        .orderBy(desc(newsArticles.publishDate))
+        .limit(pageSize)
+        .offset(offset),
+      db
+        .select({ count: count() })
+        .from(newsArticles)
+        .where(eq(newsArticles.isRelevant, 1)),
+    ]);
+    return { items, total: totalResult[0]?.count || 0 };
+  } catch (error) {
+    console.warn("[DB] getAllNews failed:", (error as Error).message);
+    return { items: [], total: 0 };
+  }
 }
 
 export async function getNewsStats(): Promise<{
@@ -191,43 +222,48 @@ export async function getNewsStats(): Promise<{
   const db = await getDb();
   if (!db) return { totalCount: 0, keywordCounts: {}, dailyCounts: [], earliestDate: "", latestDate: "" };
 
-  const allArticles = await db
-    .select({
-      publishDate: newsArticles.publishDate,
-      matchedKeywords: newsArticles.matchedKeywords,
-    })
-    .from(newsArticles)
-    .where(eq(newsArticles.isRelevant, 1));
+  try {
+    const allArticles = await db
+      .select({
+        publishDate: newsArticles.publishDate,
+        matchedKeywords: newsArticles.matchedKeywords,
+      })
+      .from(newsArticles)
+      .where(eq(newsArticles.isRelevant, 1));
 
-  const keywordCounts: Record<string, number> = {};
-  const dateCountMap: Record<string, number> = {};
-  let earliest = "9999-99-99";
-  let latest = "0000-00-00";
+    const keywordCounts: Record<string, number> = {};
+    const dateCountMap: Record<string, number> = {};
+    let earliest = "9999-99-99";
+    let latest = "0000-00-00";
 
-  for (const a of allArticles) {
-    // Count keywords
-    const kws = a.matchedKeywords.split(",").map((k) => k.trim()).filter(Boolean);
-    for (const kw of kws) {
-      keywordCounts[kw] = (keywordCounts[kw] || 0) + 1;
+    for (const a of allArticles) {
+      // Count keywords
+      const kws = a.matchedKeywords.split(",").map((k) => k.trim()).filter(Boolean);
+      for (const kw of kws) {
+        keywordCounts[kw] = (keywordCounts[kw] || 0) + 1;
+      }
+      // Count by date
+      dateCountMap[a.publishDate] = (dateCountMap[a.publishDate] || 0) + 1;
+      if (a.publishDate < earliest) earliest = a.publishDate;
+      if (a.publishDate > latest) latest = a.publishDate;
     }
-    // Count by date
-    dateCountMap[a.publishDate] = (dateCountMap[a.publishDate] || 0) + 1;
-    if (a.publishDate < earliest) earliest = a.publishDate;
-    if (a.publishDate > latest) latest = a.publishDate;
+
+    const dailyCounts = Object.entries(dateCountMap)
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 30);
+
+    return {
+      totalCount: allArticles.length,
+      keywordCounts,
+      dailyCounts,
+      earliestDate: earliest === "9999-99-99" ? "" : earliest,
+      latestDate: latest === "0000-00-00" ? "" : latest,
+    };
+  } catch (error) {
+    console.warn("[DB] getNewsStats failed:", (error as Error).message);
+    return { totalCount: 0, keywordCounts: {}, dailyCounts: [], earliestDate: "", latestDate: "" };
   }
-
-  const dailyCounts = Object.entries(dateCountMap)
-    .map(([date, count]) => ({ date, count }))
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 30);
-
-  return {
-    totalCount: allArticles.length,
-    keywordCounts,
-    dailyCounts,
-    earliestDate: earliest === "9999-99-99" ? "" : earliest,
-    latestDate: latest === "0000-00-00" ? "" : latest,
-  };
 }
 
 // ─── Get news by IDs (for report generation) ─────────────
@@ -250,17 +286,27 @@ export async function getNewsByIds(
 export async function getActiveKeywords(): Promise<string[]> {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db.select({ keyword: keywords.keyword })
-    .from(keywords)
-    .where(eq(keywords.isActive, 1))
-    .orderBy(keywords.keyword);
-  return rows.map(r => r.keyword);
+  try {
+    const rows = await db.select({ keyword: keywords.keyword })
+      .from(keywords)
+      .where(eq(keywords.isActive, 1))
+      .orderBy(keywords.keyword);
+    return rows.map(r => r.keyword);
+  } catch (error) {
+    console.warn("[DB] getActiveKeywords failed, using defaults:", (error as Error).message);
+    return [];
+  }
 }
 
 export async function getAllKeywords() {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(keywords).orderBy(keywords.keyword);
+  try {
+    return await db.select().from(keywords).orderBy(keywords.keyword);
+  } catch (error) {
+    console.warn("[DB] getAllKeywords failed:", (error as Error).message);
+    return [];
+  }
 }
 
 export async function addKeyword(keyword: string): Promise<boolean> {
@@ -322,33 +368,43 @@ export async function removeFavorite(articleId: number): Promise<boolean> {
 export async function getFavorites(): Promise<Array<typeof newsArticles.$inferSelect & { favoriteId: number; note: string | null; favoritedAt: Date }>> {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db
-    .select({
-      id: newsArticles.id,
-      title: newsArticles.title,
-      titleDisplay: newsArticles.titleDisplay,
-      titleChinese: newsArticles.titleChinese,
-      publishDate: newsArticles.publishDate,
-      url: newsArticles.url,
-      matchedKeywords: newsArticles.matchedKeywords,
-      summary: newsArticles.summary,
-      isRelevant: newsArticles.isRelevant,
-      createdAt: newsArticles.createdAt,
-      favoriteId: favorites.id,
-      note: favorites.note,
-      favoritedAt: favorites.createdAt,
-    })
-    .from(favorites)
-    .innerJoin(newsArticles, eq(favorites.articleId, newsArticles.id))
-    .orderBy(desc(favorites.createdAt));
-  return rows;
+  try {
+    const rows = await db
+      .select({
+        id: newsArticles.id,
+        title: newsArticles.title,
+        titleDisplay: newsArticles.titleDisplay,
+        titleChinese: newsArticles.titleChinese,
+        publishDate: newsArticles.publishDate,
+        url: newsArticles.url,
+        matchedKeywords: newsArticles.matchedKeywords,
+        summary: newsArticles.summary,
+        isRelevant: newsArticles.isRelevant,
+        createdAt: newsArticles.createdAt,
+        favoriteId: favorites.id,
+        note: favorites.note,
+        favoritedAt: favorites.createdAt,
+      })
+      .from(favorites)
+      .innerJoin(newsArticles, eq(favorites.articleId, newsArticles.id))
+      .orderBy(desc(favorites.createdAt));
+    return rows;
+  } catch (error) {
+    console.warn("[DB] getFavorites failed:", (error as Error).message);
+    return [];
+  }
 }
 
 export async function getFavoriteArticleIds(): Promise<number[]> {
   const db = await getDb();
   if (!db) return [];
-  const rows = await db.select({ articleId: favorites.articleId }).from(favorites);
-  return rows.map(r => r.articleId);
+  try {
+    const rows = await db.select({ articleId: favorites.articleId }).from(favorites);
+    return rows.map(r => r.articleId);
+  } catch (error) {
+    console.warn("[DB] getFavoriteArticleIds failed:", (error as Error).message);
+    return [];
+  }
 }
 
 // ─── Scrape Job Queries ──────────────────────────────────
