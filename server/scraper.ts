@@ -141,7 +141,8 @@ export async function scrapeNews(
   startDate?: string,
   endDate?: string,
   maxPages = 10,
-  keywordList?: string[]
+  keywordList?: string[],
+  excludeKeywords?: string[]
 ): Promise<{ articles: ScrapedArticle[]; totalScanned: number }> {
   const articles: ScrapedArticle[] = [];
   let totalScanned = 0;
@@ -165,6 +166,15 @@ export async function scrapeNews(
         }
         if (endDate && article.publishDate > endDate) {
           continue;
+        }
+
+        // Apply exclude keywords filter
+        if (excludeKeywords && excludeKeywords.length > 0) {
+          const combined = `${article.title} ${article.summary}`;
+          const shouldExclude = excludeKeywords.some(kw =>
+            new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(combined)
+          );
+          if (shouldExclude) continue;
         }
 
         articles.push(article);

@@ -82,6 +82,7 @@ async function ensureTables(conn: mysql.Connection): Promise<void> {
     { table: 'news_articles', column: 'summary', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `summary` text' },
     { table: 'news_articles', column: 'isRelevant', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `isRelevant` int NOT NULL DEFAULT 1' },
     { table: 'keywords', column: 'isActive', ddl: 'ALTER TABLE `keywords` ADD COLUMN `isActive` int NOT NULL DEFAULT 1' },
+    { table: 'keywords', column: 'type', ddl: "ALTER TABLE `keywords` ADD COLUMN `type` varchar(10) NOT NULL DEFAULT 'include'" },
     { table: 'favorites', column: 'note', ddl: 'ALTER TABLE `favorites` ADD COLUMN `note` text' },
   ];
 
@@ -376,17 +377,32 @@ export async function getNewsByIds(
 
 // ─── Keyword Queries ──────────────────────────────────────
 
-export async function getActiveKeywords(): Promise<string[]> {
+export async function getActiveKeywords() {
   const db = await getDb();
   if (!db) return [];
   try {
     const rows = await db.select({ keyword: keywords.keyword })
       .from(keywords)
-      .where(eq(keywords.isActive, 1))
+      .where(and(eq(keywords.isActive, 1), eq(keywords.type, 'include')))
       .orderBy(keywords.keyword);
     return rows.map(r => r.keyword);
   } catch (error) {
     console.warn("[DB] getActiveKeywords failed, using defaults:", (error as Error).message);
+    return [];
+  }
+}
+
+export async function getActiveExcludeKeywords(): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db.select({ keyword: keywords.keyword })
+      .from(keywords)
+      .where(and(eq(keywords.isActive, 1), eq(keywords.type, 'exclude')))
+      .orderBy(keywords.keyword);
+    return rows.map(r => r.keyword);
+  } catch (error) {
+    console.warn("[DB] getActiveExcludeKeywords failed:", (error as Error).message);
     return [];
   }
 }
@@ -402,16 +418,16 @@ export async function getAllKeywords() {
   }
 }
 
-export async function addKeyword(keyword: string): Promise<boolean> {
+export async function addKeyword(keyword: string, type: 'include' | 'exclude' = 'include'): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
   try {
-    await db.insert(keywords).values({ keyword });
+    await db.insert(keywords).values({ keyword, type });
     return true;
   } catch (error: any) {
     if (error.code === "ER_DUP_ENTRY") {
-      // Already exists, try to reactivate
-      await db.update(keywords).set({ isActive: 1 }).where(eq(keywords.keyword, keyword));
+      // Already exists, try to reactivate with correct type
+      await db.update(keywords).set({ isActive: 1, type }).where(eq(keywords.keyword, keyword));
       return true;
     }
     console.error("[DB] Failed to add keyword:", error.message);

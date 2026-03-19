@@ -11,6 +11,7 @@ import {
   insertNewsArticles,
   insertScrapeJob,
   getActiveKeywords,
+  getActiveExcludeKeywords,
   getAllKeywords,
   addKeyword,
   removeKeyword,
@@ -134,15 +135,17 @@ async function performScrape(
   articlesFiltered: number;
   articlesInserted: number;
 }> {
-  // Get active keywords from database
+  // Get active include/exclude keywords from database
   const activeKeywords = await getActiveKeywords();
+  const excludeKeywords = await getActiveExcludeKeywords();
   const keywordList = activeKeywords.length > 0 ? activeKeywords : KEYWORDS;
 
   const { articles: scraped, totalScanned } = await scrapeNews(
     startDate,
     endDate,
     maxPages,
-    keywordList
+    keywordList,
+    excludeKeywords
   );
 
   if (scraped.length === 0) {
@@ -566,9 +569,12 @@ export const appRouter = router({
 
     // Add a new keyword
     add: publicProcedure
-      .input(z.object({ keyword: z.string().min(1).max(100) }))
+      .input(z.object({
+        keyword: z.string().min(1).max(100),
+        type: z.enum(['include', 'exclude']).optional().default('include'),
+      }))
       .mutation(async ({ input }) => {
-        const success = await addKeyword(input.keyword.trim());
+        const success = await addKeyword(input.keyword.trim(), input.type);
         return { success, message: success ? "关键词添加成功" : "关键词添加失败" };
       }),
 

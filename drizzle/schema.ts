@@ -66,6 +66,8 @@ export const keywords = mysqlTable("keywords", {
   keyword: varchar("keyword", { length: 100 }).notNull().unique(),
   /** Whether this keyword is currently active */
   isActive: int("isActive").default(1).notNull(),
+  /** Keyword type: 'include' = must match, 'exclude' = must not match */
+  type: varchar("type", { length: 10 }).default("include").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
