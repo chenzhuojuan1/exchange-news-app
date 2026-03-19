@@ -8,4 +8,6 @@ export const ENV = {
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   // Support OPENAI_API_KEY as fallback for BUILT_IN_FORGE_API_KEY
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? process.env.OPENAI_API_KEY ?? "",
+  // Google Gemini API Key (AIza...)
+  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
 };
