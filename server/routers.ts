@@ -407,43 +407,73 @@ export const appRouter = router({
     generate: publicProcedure
       .input(
         z.object({
-          articleIds: z.array(z.number().int().positive()).min(1).max(20),
+          articleIds: z.array(z.number().int().positive()).max(20).default([]),
+          // Optional extra content from uploaded files or pasted text
+          extraContent: z.string().max(50000).optional(),
         })
       )
       .mutation(async ({ input }) => {
-        // 1. Get selected articles from DB
-        const articles = await getNewsByIds(input.articleIds);
-        if (articles.length === 0) {
-          return { report: "", message: "未找到选中的新闻" };
+        const hasArticles = input.articleIds.length > 0;
+        const hasExtra = !!(input.extraContent && input.extraContent.trim());
+
+        if (!hasArticles && !hasExtra) {
+          return { report: "", message: "请选择新闻或上传文件内容" };
         }
 
-        // 2. Fetch full content from original URLs (parallel, max 5 concurrent)
-        const articlesWithContent = [];
-        const batchSize = 5;
-        for (let i = 0; i < articles.length; i += batchSize) {
-          const batch = articles.slice(i, i + batchSize);
-          const contents = await Promise.all(
-            batch.map((a) => fetchArticleContent(a.url))
-          );
-          for (let j = 0; j < batch.length; j++) {
-            articlesWithContent.push({
-              title: batch[j].title,
-              titleChinese: batch[j].titleChinese,
-              publishDate: batch[j].publishDate,
-              url: batch[j].url,
-              matchedKeywords: batch[j].matchedKeywords,
-              fullContent: contents[j] || batch[j].summary || "",
-            });
+        const articlesWithContent: Array<{
+          title: string;
+          titleChinese: string | null;
+          publishDate: string;
+          url: string;
+          matchedKeywords: string;
+          fullContent: string;
+        }> = [];
+
+        // 1. Get selected articles from DB and fetch full content
+        if (hasArticles) {
+          const articles = await getNewsByIds(input.articleIds);
+          const batchSize = 5;
+          for (let i = 0; i < articles.length; i += batchSize) {
+            const batch = articles.slice(i, i + batchSize);
+            const contents = await Promise.all(
+              batch.map((a) => fetchArticleContent(a.url))
+            );
+            for (let j = 0; j < batch.length; j++) {
+              articlesWithContent.push({
+                title: batch[j].title,
+                titleChinese: batch[j].titleChinese,
+                publishDate: batch[j].publishDate,
+                url: batch[j].url,
+                matchedKeywords: batch[j].matchedKeywords,
+                fullContent: contents[j] || batch[j].summary || "",
+              });
+            }
           }
+        }
+
+        // 2. Append extra content as an additional article entry
+        if (hasExtra) {
+          articlesWithContent.push({
+            title: "补充材料",
+            titleChinese: "补充材料",
+            publishDate: new Date().toISOString().split("T")[0],
+            url: "",
+            matchedKeywords: "",
+            fullContent: input.extraContent!.trim(),
+          });
         }
 
         // 3. Generate report via LLM
         const report = await generateReport(articlesWithContent);
 
+        const parts = [];
+        if (hasArticles) parts.push(`${input.articleIds.length} 条新闻`);
+        if (hasExtra) parts.push("1 份补充材料");
+
         return {
           report,
-          message: `成功生成报告，包含 ${articles.length} 条新闻`,
-          articleCount: articles.length,
+          message: `成功生成报告，包含 ${parts.join(" + ")}`,
+          articleCount: articlesWithContent.length,
         };
       }),
   }),
