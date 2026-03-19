@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: exchange-news-app
+    runtime: node
+    buildCommand: pnpm install && pnpm run build
+    startCommand: pnpm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: DATABASE_URL
+        sync: false
