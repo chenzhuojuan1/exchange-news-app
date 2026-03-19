@@ -369,6 +369,18 @@ export const appRouter = router({
         geminiKeyPrefix: process.env.GEMINI_API_KEY?.slice(0, 8) ?? "(not set)",
       };
     }),
+    testLLM: publicProcedure.mutation(async () => {
+      try {
+        const { invokeLLM } = await import("./_core/llm");
+        const response = await invokeLLM({
+          messages: [{ role: "user", content: "Say hello in Chinese in one sentence." }],
+        });
+        const content = response.choices[0]?.message?.content;
+        return { success: true, content, model: response.model };
+      } catch (err: any) {
+        return { success: false, error: err?.message ?? String(err) };
+      }
+    }),
   }),
   // ─── Report generation ────────────────────────────────────────
   report: router({
