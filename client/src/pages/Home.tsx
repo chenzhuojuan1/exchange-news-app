@@ -21,6 +21,7 @@ import {
   CheckSquare,
   XSquare,
   Star,
+  History,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useState, useMemo, useRef, useCallback } from "react";
@@ -47,6 +48,26 @@ export default function Home() {
   const [allPage, setAllPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Helper: format date to YYYY-MM-DD
+  const formatDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  // Quick date range presets for history backfill
+  const setQuickRange = useCallback((days: number) => {
+    const end = new Date();
+    end.setDate(end.getDate() - 1);
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+    const sd = formatDate(start);
+    const ed = formatDate(end);
+    setStartDate(sd);
+    setEndDate(ed);
+    setSearchStartDate(sd);
+    setSearchEndDate(ed);
+    setActiveTab("range");
+  }, []);
 
   // Queries
   const yesterday = trpc.news.yesterday.useQuery();
@@ -355,6 +376,30 @@ export default function Home() {
           <TabsContent value="range" className="mt-0">
             <Card className="mb-4">
               <CardContent className="p-4">
+                {/* Quick date presets */}
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                    <History className="h-3.5 w-3.5" />
+                    快捷回溯：
+                  </span>
+                  {[
+                    { label: "过去3天", days: 3 },
+                    { label: "过去一周", days: 7 },
+                    { label: "过去两周", days: 14 },
+                    { label: "过去一个月", days: 30 },
+                    { label: "过去三个月", days: 90 },
+                  ].map((preset) => (
+                    <Button
+                      key={preset.days}
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs px-2.5"
+                      onClick={() => setQuickRange(preset.days)}
+                    >
+                      {preset.label}
+                    </Button>
+                  ))}
+                </div>
                 <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3">
                   <div className="flex-1 w-full sm:w-auto">
                     <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
