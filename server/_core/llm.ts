@@ -213,10 +213,6 @@ const resolveApiUrl = () => {
   if (ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0) {
     return `${ENV.forgeApiUrl.replace(/\/$/, "")}/chat/completions`;
   }
-  // If GEMINI_API_KEY is configured, use Google Gemini OpenAI-compatible endpoint
-  if (ENV.geminiApiKey) {
-    return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
-  }
   // If using OPENAI_API_KEY directly (no forge URL), use OpenAI official endpoint
   if (!process.env.BUILT_IN_FORGE_API_KEY && process.env.OPENAI_API_KEY) {
     return "https://api.openai.com/v1/chat/completions";
@@ -225,22 +221,74 @@ const resolveApiUrl = () => {
 };
 
 const resolveApiKey = () => {
-  // Prefer GEMINI_API_KEY if configured
-  if (ENV.geminiApiKey) return ENV.geminiApiKey;
   return ENV.forgeApiKey;
 };
 
 const resolveModel = () => {
-  // Use Gemini model when GEMINI_API_KEY is configured
-  if (ENV.geminiApiKey) return "gemini-2.0-flash";
   return "gpt-4.1-mini";
 };
 
 const assertApiKey = () => {
-  if (!resolveApiKey()) {
+  // Allow Gemini key as alternative
+  if (!resolveApiKey() && !ENV.geminiApiKey) {
     throw new Error("No API key configured (GEMINI_API_KEY or OPENAI_API_KEY)");
   }
 };
+
+// ─── Native Gemini API call ────────────────────────────────
+async function invokeGemini(messages: Array<{ role: string; content: string }>): Promise<InvokeResult> {
+  const GEMINI_MODEL = "gemini-2.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${ENV.geminiApiKey}`;
+
+  // Convert OpenAI message format to Gemini format
+  const systemParts: string[] = [];
+  const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+
+  for (const msg of messages) {
+    if (msg.role === "system") {
+      systemParts.push(msg.content);
+    } else {
+      contents.push({
+        role: msg.role === "assistant" ? "model" : "user",
+        parts: [{ text: msg.content }],
+      });
+    }
+  }
+
+  const payload: Record<string, unknown> = { contents };
+  if (systemParts.length > 0) {
+    payload.systemInstruction = { parts: [{ text: systemParts.join("\n") }] };
+  }
+  payload.generationConfig = { maxOutputTokens: 8192 };
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
+  }
+
+  const data = await response.json() as any;
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+
+  // Return in OpenAI-compatible format
+  return {
+    id: "gemini",
+    object: "chat.completion",
+    created: Date.now(),
+    model: GEMINI_MODEL,
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: text },
+      finish_reason: "stop",
+    }],
+    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+  } as InvokeResult;
+}
 
 const normalizeResponseFormat = ({
   responseFormat,
@@ -289,6 +337,15 @@ const normalizeResponseFormat = ({
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   assertApiKey();
+
+  // If GEMINI_API_KEY is configured, use native Gemini API
+  if (ENV.geminiApiKey) {
+    const msgs = params.messages.map((m) => ({
+      role: typeof m === "object" && "role" in m ? (m as any).role : "user",
+      content: typeof m === "object" && "content" in m ? String((m as any).content ?? "") : "",
+    }));
+    return invokeGemini(msgs);
+  }
 
   const {
     messages,
