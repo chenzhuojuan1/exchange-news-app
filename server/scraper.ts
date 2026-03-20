@@ -2,22 +2,45 @@ import * as cheerio from "cheerio";
 import { invokeLLM } from "./_core/llm";
 
 // ─── Keywords ──────────────────────────────────────────────
+// ── Short-form keywords (matched with word-boundary) ──────
 export const KEYWORDS = [
   "NASDAQ", "NYSE", "SEC", "LSEG", "FCA", "JPX", "Deutsche",
   "TMX", "SGX", "HKEX", "SFC", "KRX", "Saudi", "ADX", "RBI",
   "EURONEXT", "SIX", "DFM", "ESMA", "MAS",
+  // ── newly added: only essential missing abbreviations ──
+  "SEHK", "CIRO", "IOSCO", "ISDA",
+];
+
+// ── Long-form phrases: full names of existing keyword orgs ──
+// These ensure articles using full names (not abbreviations) are also caught
+const KEYWORD_PHRASES = [
+  // Full names for orgs already in KEYWORDS
+  "Monetary Authority of Singapore",       // → MAS
+  "Securities and Futures Commission",      // → SFC
+  "Financial Conduct Authority",            // → FCA
+  "Securities and Exchange Commission",     // → SEC
+  "Japan Exchange Group",                   // → JPX
+  "Hong Kong Exchanges",                    // → HKEX
+  "London Stock Exchange",                  // → LSEG
+  "Deutsche Boerse",                        // → Deutsche
+  "Deutsche Börse",                         // → Deutsche
+  // Phrases for newly added orgs
+  "Canadian Securities",                    // → CSA (covers CSA Regulators)
+  "Canadian Investment Regulatory",         // → CIRO
+  // Cross-border / major policy phrases
+  "Financial Regulatory Forum",             // major bilateral regulatory events
 ];
 
 // Patterns for irrelevant news to exclude
+// NOTE: removed chairman/chairwoman/keynote — regulatory leaders' speeches are important
 const EXCLUDE_PATTERNS = [
-  /\bappoint/i, /\bnominat/i, /\bresign/i, /\bretir/i,
+  /\bappoints?\b/i, /\bnominat/i, /\bresigns?\b/i, /\bretir(?:es?|ing|ement)\b/i,
   /\bCEO\b/, /\bCFO\b/, /\bCOO\b/, /\bCTO\b/,
-  /\bchairman\b/i, /\bchairwoman\b/i, /\bboard of directors\b/i,
+  /\bboard of directors\b/i,
   /\bfinancial results\b/i, /\bearnings report\b/i, /\bquarterly results\b/i,
-  /\bannual report\b/i, /\brevenue\b/i, /\bprofit\b/i, /\bdividend\b/i,
+  /\bannual report\b/i, /\bdividend\b/i,
   /\bshare buyback\b/i, /\bshare repurchase\b/i, /\bstock purchase\b/i,
   /\bacquisition of shares\b/i, /\bequity purchase\b/i,
-  /\bkeynote speech\b/i, /\bkeynote address\b/i,
 ];
 
 const BASE_URL = "https://mondovisione.com/media-and-resources/news/";
@@ -29,6 +52,64 @@ export interface ScrapedArticle {
   publishDate: string; // YYYY-MM-DD
   summary: string;
   matchedKeywords: string[];
+}
+
+// ─── Helper: fetch with timeout and retry ─────────────────
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  retries = 3,
+  timeoutMs = 30000
+): Promise<Response> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+          ...options.headers,
+        },
+      });
+      clearTimeout(timeout);
+
+      if (response.ok) return response;
+
+      // Retry on 5xx server errors
+      if (response.status >= 500) {
+        lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+        console.warn(`[Scraper] Attempt ${attempt + 1}/${retries} failed for ${url}: ${response.status}`);
+      } else {
+        // 4xx errors: don't retry
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (err: any) {
+      lastError = err;
+      if (err.name === "AbortError") {
+        console.warn(`[Scraper] Attempt ${attempt + 1}/${retries} timed out for ${url}`);
+      } else if (err.message?.includes("HTTP 4")) {
+        throw err; // Don't retry 4xx
+      } else {
+        console.warn(`[Scraper] Attempt ${attempt + 1}/${retries} failed for ${url}: ${err.message}`);
+      }
+    }
+
+    // Wait before retry with exponential backoff
+    if (attempt < retries - 1) {
+      const delay = Math.min(1000 * Math.pow(2, attempt), 10000);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+
+  throw lastError || new Error(`Failed to fetch ${url} after ${retries} attempts`);
 }
 
 // ─── Parse date from DD/MM/YYYY to YYYY-MM-DD ─────────────
@@ -46,14 +127,47 @@ export function matchKeywords(text: string, keywordList?: string[]): string[] {
   const kws = keywordList || KEYWORDS;
   const matched: string[] = [];
   const upper = text.toUpperCase();
+
+  // 1. Match short-form keywords with word boundary
   for (const kw of kws) {
-    // Use word boundary-like check
     const regex = new RegExp(`\\b${kw}\\b`, "i");
     if (regex.test(text) || upper.includes(kw.toUpperCase())) {
       matched.push(kw);
     }
   }
+
+  // 2. Match long-form phrases (case-insensitive substring)
+  if (!keywordList) {
+    const lower = text.toLowerCase();
+    for (const phrase of KEYWORD_PHRASES) {
+      if (lower.includes(phrase.toLowerCase())) {
+        // Map phrase back to a short label for display
+        const label = phraseToLabel(phrase);
+        if (!matched.includes(label)) matched.push(label);
+      }
+    }
+  }
+
   return matched;
+}
+
+// Map long phrase to a short display label
+function phraseToLabel(phrase: string): string {
+  const map: Record<string, string> = {
+    "Monetary Authority of Singapore": "MAS",
+    "Securities and Futures Commission": "SFC",
+    "Financial Conduct Authority": "FCA",
+    "Securities and Exchange Commission": "SEC",
+    "Canadian Securities": "CSA",
+    "Canadian Investment Regulatory": "CIRO",
+    "Financial Regulatory Forum": "Regulatory",
+    "Japan Exchange Group": "JPX",
+    "Hong Kong Exchanges": "HKEX",
+    "London Stock Exchange": "LSEG",
+    "Deutsche Boerse": "Deutsche",
+    "Deutsche Börse": "Deutsche",
+  };
+  return map[phrase] || phrase;
 }
 
 // ─── Check if article is relevant ──────────────────────────
@@ -68,37 +182,41 @@ export function isRelevantArticle(title: string, summary: string): boolean {
 // ─── Scrape a single page ──────────────────────────────────
 async function scrapePage(page: number, keywordList?: string[]): Promise<ScrapedArticle[]> {
   const url = page === 1 ? BASE_URL : `${BASE_URL}?page=${page}`;
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; ExchangeNewsBot/1.0)",
-    },
-  });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch page ${page}: ${response.status}`);
-  }
-
+  const response = await fetchWithRetry(url);
   const html = await response.text();
   const $ = cheerio.load(html);
   const articles: ScrapedArticle[] = [];
 
   $("li.hentry").each((_i, el) => {
-    const titleEl = $(el).find("h4 a, h3 a");
+    const titleEl = $(el).find("h4 a, h3 a, .entry-title a");
     const title = titleEl.text().trim();
     const href = titleEl.attr("href") || "";
     const articleUrl = href.startsWith("http")
       ? href
       : `https://mondovisione.com${href}`;
 
-    // Extract date - the date element has format "Date DD/MM/YYYY"
+    // Extract date - look for abbr.published or date pattern in text
     let publishDate = "";
-    const dateEl = $(el).find(".date, .published, time");
-    const dateText = dateEl.length > 0 ? dateEl.text().trim() : $(el).text();
-    // Extract DD/MM/YYYY pattern from the text
-    const dateMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (dateMatch) {
-      const [, day, month, year] = dateMatch;
-      publishDate = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+    const abbrEl = $(el).find("abbr.published");
+    if (abbrEl.length > 0) {
+      const titleAttr = abbrEl.attr("title") || abbrEl.text();
+      const dateMatch = titleAttr.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (dateMatch) {
+        const [, day, month, year] = dateMatch;
+        publishDate = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+      }
+    }
+
+    // Fallback: search for date pattern in the full element text
+    if (!publishDate) {
+      const dateEl = $(el).find(".date, .published, time");
+      const dateText = dateEl.length > 0 ? dateEl.text().trim() : $(el).text();
+      const dateMatch = dateText.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (dateMatch) {
+        const [, day, month, year] = dateMatch;
+        publishDate = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+      }
     }
 
     // Extract summary - skip the date paragraph, get the actual content paragraph
@@ -111,6 +229,14 @@ async function scrapePage(page: number, keywordList?: string[]): Promise<Scraped
         summary = pText;
       }
     });
+
+    // Also try entry-summary class
+    if (!summary) {
+      const summaryEl = $(el).find(".entry-summary");
+      if (summaryEl.length > 0) {
+        summary = summaryEl.text().trim();
+      }
+    }
 
     if (!title || !articleUrl) return;
 
@@ -141,17 +267,20 @@ export async function scrapeNews(
   startDate?: string,
   endDate?: string,
   maxPages = 10,
-  keywordList?: string[],
-  excludeKeywords?: string[]
+  keywordList?: string[]
 ): Promise<{ articles: ScrapedArticle[]; totalScanned: number }> {
   const articles: ScrapedArticle[] = [];
   let totalScanned = 0;
   const seenUrls = new Set<string>();
+  let consecutiveErrors = 0;
+
+  console.log(`[Scraper] Starting scrape: startDate=${startDate}, endDate=${endDate}, maxPages=${maxPages}`);
 
   for (let page = 1; page <= maxPages; page++) {
     try {
       const pageArticles = await scrapePage(page, keywordList);
       totalScanned += pageArticles.length;
+      consecutiveErrors = 0; // Reset on success
 
       let allTooOld = false;
 
@@ -168,32 +297,36 @@ export async function scrapeNews(
           continue;
         }
 
-        // Apply exclude keywords filter
-        if (excludeKeywords && excludeKeywords.length > 0) {
-          const combined = `${article.title} ${article.summary}`;
-          const shouldExclude = excludeKeywords.some(kw =>
-            new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(combined)
-          );
-          if (shouldExclude) continue;
-        }
-
         articles.push(article);
       }
 
       // If all articles on this page are older than startDate, stop
       if (allTooOld && pageArticles.length > 0) {
         const newestOnPage = pageArticles[0]?.publishDate || "";
-        if (startDate && newestOnPage < startDate) break;
+        if (startDate && newestOnPage < startDate) {
+          console.log(`[Scraper] Stopping at page ${page}: all articles older than ${startDate}`);
+          break;
+        }
       }
 
-      // Small delay between pages
-      await new Promise((r) => setTimeout(r, 500));
-    } catch (err) {
-      console.error(`Error scraping page ${page}:`, err);
-      break;
+      // Small delay between pages to be polite
+      await new Promise((r) => setTimeout(r, 800));
+    } catch (err: any) {
+      consecutiveErrors++;
+      console.error(`[Scraper] Error scraping page ${page}:`, err.message);
+
+      // Only stop after 3 consecutive errors (not on first failure)
+      if (consecutiveErrors >= 3) {
+        console.error(`[Scraper] Stopping after ${consecutiveErrors} consecutive errors`);
+        break;
+      }
+
+      // Wait longer before retrying next page
+      await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
+  console.log(`[Scraper] Scrape complete: ${articles.length} articles found, ${totalScanned} total scanned`);
   return { articles, totalScanned };
 }
 
@@ -239,7 +372,7 @@ export async function translateTitles(
         }
       }
     } catch (err) {
-      console.error("Translation error:", err);
+      console.error("[Scraper] Translation error:", err);
       // Fallback: use original titles
       for (const t of batch) {
         result.set(t, t);
@@ -248,7 +381,7 @@ export async function translateTitles(
 
     // Small delay between batches
     if (i + batchSize < titles.length) {
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
 
@@ -258,12 +391,7 @@ export async function translateTitles(
 // ─── Fetch article full text from original URL ──────────
 export async function fetchArticleContent(url: string): Promise<string> {
   try {
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; ExchangeNewsBot/1.0)",
-      },
-    });
-    if (!response.ok) return "";
+    const response = await fetchWithRetry(url, {}, 2, 20000);
     const html = await response.text();
     const $ = cheerio.load(html);
     // Try common article content selectors
@@ -291,7 +419,7 @@ export async function fetchArticleContent(url: string): Promise<string> {
     // Limit to ~5000 chars to avoid token overflow
     return content.substring(0, 5000);
   } catch (err) {
-    console.error(`Failed to fetch article content from ${url}:`, err);
+    console.error(`[Scraper] Failed to fetch article content from ${url}:`, err);
     return "";
   }
 }
@@ -344,7 +472,7 @@ export async function generateReport(
 
 （一）新加坡推行多项资本市场改革以吸引优质企业
 
-新加坡交易所监管公司和金融管理局（MAS）10月29日宣布多项资本市场改革。一是下调主板公司的盈利测试门槛，将最近一年的合并税前利润从3000万元下调至1000万元。二是对未盈利生命科学公司提供贴合行业特点的上市标准，将上市申请人的经营记录从三年减至两年，并要求至少一款产品已成功开发。三是优化上市流程，发行人未来只需与新交所监管公司对接，不必分别向金管局和新交所监管公司提交上市文件。四是取消持续亏损公司的财务观察名单机制，以避免对市场信心和企业融资造成不必要影响。
+新加坡交易所监管公司和金融管理局（MAS）10月29日宣布多项资本市场改革。一是下调主板公司的盈利测试门槛，将最近一年的合并税前利润从3000万元下调至1000万元。二是对未盈利生命科学公司提供贴合行业特点的上市标准，将上市申请人的经营记录从三年减至两年，并要求至少一款产品进入后期临床试验阶段。三是将主板公司的最低市值要求从1.5亿新元提高至3亿新元，以确保上市公司具备足够的市场影响力和流动性。四是将凯利板公司的最低市值要求从4000万新元提高至1亿新元。五是对季度报告实行差异化管理，仅要求市值低于3亿新元的主板公司和所有凯利板公司进行季度报告，以减轻大型公司的合规负担。六是允许双重股权结构（DCS）公司纳入海峡时报指数，以增强市场的多样性和吸引力。
 
 市场评论认为，改革旨在推动新加坡迈向"与主要发达市场一致"的、更以信息披露为基础的监管制度。
 
@@ -364,7 +492,7 @@ export async function generateReport(
     }
     return "报告生成失败，请重试";
   } catch (err) {
-    console.error("Report generation error:", err);
+    console.error("[Scraper] Report generation error:", err);
     return "报告生成失败，请重试";
   }
 }

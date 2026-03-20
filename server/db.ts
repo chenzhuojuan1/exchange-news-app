@@ -64,6 +64,14 @@ async function ensureTables(conn: mysql.Connection): Promise<void> {
       \`createdAt\` timestamp NOT NULL DEFAULT (now()),
       CONSTRAINT \`favorites_id\` PRIMARY KEY(\`id\`)
     )`,
+    // Ensure columns added in later migrations exist
+    `ALTER TABLE \`scrape_jobs\` ADD COLUMN IF NOT EXISTS \`articlesFiltered\` int NOT NULL DEFAULT 0`,
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`titleDisplay\` varchar(200)`,
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`titleChinese\` text`,
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`summary\` text`,
+    `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`isRelevant\` int NOT NULL DEFAULT 1`,
+    `ALTER TABLE \`keywords\` ADD COLUMN IF NOT EXISTS \`isActive\` int NOT NULL DEFAULT 1`,
+    `ALTER TABLE \`favorites\` ADD COLUMN IF NOT EXISTS \`note\` text`,
   ];
   for (const stmt of statements) {
     try {
@@ -72,70 +80,54 @@ async function ensureTables(conn: mysql.Connection): Promise<void> {
       console.warn("[Database] Table creation warning:", (err as Error).message);
     }
   }
-
-  // Ensure columns added in later migrations exist
-  // Use INFORMATION_SCHEMA to check existence first (avoids IF NOT EXISTS syntax incompatibility)
-  const columnChecks: Array<{ table: string; column: string; ddl: string }> = [
-    { table: 'scrape_jobs', column: 'articlesFiltered', ddl: 'ALTER TABLE `scrape_jobs` ADD COLUMN `articlesFiltered` int NOT NULL DEFAULT 0' },
-    { table: 'news_articles', column: 'titleDisplay', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `titleDisplay` varchar(200)' },
-    { table: 'news_articles', column: 'titleChinese', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `titleChinese` text' },
-    { table: 'news_articles', column: 'summary', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `summary` text' },
-    { table: 'news_articles', column: 'isRelevant', ddl: 'ALTER TABLE `news_articles` ADD COLUMN `isRelevant` int NOT NULL DEFAULT 1' },
-    { table: 'keywords', column: 'isActive', ddl: 'ALTER TABLE `keywords` ADD COLUMN `isActive` int NOT NULL DEFAULT 1' },
-    { table: 'keywords', column: 'type', ddl: "ALTER TABLE `keywords` ADD COLUMN `type` varchar(10) NOT NULL DEFAULT 'include'" },
-    { table: 'favorites', column: 'note', ddl: 'ALTER TABLE `favorites` ADD COLUMN `note` text' },
-  ];
-
-  // Get database name from connection
-  let dbName = '';
-  try {
-    const [rows] = await conn.execute('SELECT DATABASE() as db') as any;
-    dbName = rows[0]?.db || '';
-  } catch (e) {
-    console.warn('[Database] Could not get database name:', (e as Error).message);
-  }
-
-  for (const { table, column, ddl } of columnChecks) {
-    try {
-      // Check if column exists via INFORMATION_SCHEMA
-      const [existing] = await conn.execute(
-        `SELECT COUNT(*) as cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
-        [table, column]
-      ) as any;
-      const count = existing[0]?.cnt ?? existing[0]?.['COUNT(*)'] ?? 0;
-      if (Number(count) === 0) {
-        await conn.execute(ddl);
-        console.log(`[Database] Added column ${table}.${column}`);
-      }
-    } catch (err) {
-      console.warn(`[Database] Column check/add warning for ${table}.${column}:`, (err as Error).message);
-    }
-  }
-
   _ensuredTables = true;
   console.log("[Database] All tables ensured");
 }
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
-export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
+// Check if connection is still alive, reconnect if needed
+async function ensureConnection(): Promise<mysql.Connection | null> {
+  if (_connection) {
     try {
-      const connection = await mysql.createConnection({
-        uri: process.env.DATABASE_URL,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
-      });
-      _connection = connection;
-      _db = drizzle(connection);
-      console.log("[Database] Connected successfully");
-
-      // Ensure all tables exist on first connect
-      await ensureTables(connection);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
+      await _connection.ping();
+      return _connection;
+    } catch {
+      console.warn("[Database] Connection lost, reconnecting...");
       _db = null;
       _connection = null;
     }
   }
+  return null;
+}
+
+// Lazily create the drizzle instance so local tooling can run without a DB.
+export async function getDb() {
+  if (!process.env.DATABASE_URL) return null;
+
+  // Check existing connection health
+  if (_db) {
+    const conn = await ensureConnection();
+    if (conn) return _db;
+    // Connection lost, reset and reconnect below
+  }
+
+  try {
+    const connection = await mysql.createConnection({
+      uri: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: true } : undefined,
+      connectTimeout: 15000,
+    });
+    _connection = connection;
+    _db = drizzle(connection);
+    console.log("[Database] Connected successfully");
+
+    // Ensure all tables exist on first connect
+    await ensureTables(connection);
+  } catch (error) {
+    console.warn("[Database] Failed to connect:", error);
+    _db = null;
+    _connection = null;
+  }
+
   return _db;
 }
 
@@ -367,42 +359,32 @@ export async function getNewsByIds(
 ): Promise<typeof newsArticles.$inferSelect[]> {
   const db = await getDb();
   if (!db || ids.length === 0) return [];
-  const { inArray } = await import("drizzle-orm");
-  return db
-    .select()
-    .from(newsArticles)
-    .where(inArray(newsArticles.id, ids))
-    .orderBy(desc(newsArticles.publishDate));
-}
-
-// ─── Keyword Queries ──────────────────────────────────────
-
-export async function getActiveKeywords() {
-  const db = await getDb();
-  if (!db) return [];
   try {
-    const rows = await db.select({ keyword: keywords.keyword })
-      .from(keywords)
-      .where(and(eq(keywords.isActive, 1), eq(keywords.type, 'include')))
-      .orderBy(keywords.keyword);
-    return rows.map(r => r.keyword);
+    const { inArray } = await import("drizzle-orm");
+    return await db
+      .select()
+      .from(newsArticles)
+      .where(inArray(newsArticles.id, ids))
+      .orderBy(desc(newsArticles.publishDate));
   } catch (error) {
-    console.warn("[DB] getActiveKeywords failed, using defaults:", (error as Error).message);
+    console.warn("[DB] getNewsByIds failed:", (error as Error).message);
     return [];
   }
 }
 
-export async function getActiveExcludeKeywords(): Promise<string[]> {
+// ─── Keyword Queries ──────────────────────────────────────
+
+export async function getActiveKeywords(): Promise<string[]> {
   const db = await getDb();
   if (!db) return [];
   try {
     const rows = await db.select({ keyword: keywords.keyword })
       .from(keywords)
-      .where(and(eq(keywords.isActive, 1), eq(keywords.type, 'exclude')))
+      .where(eq(keywords.isActive, 1))
       .orderBy(keywords.keyword);
     return rows.map(r => r.keyword);
   } catch (error) {
-    console.warn("[DB] getActiveExcludeKeywords failed:", (error as Error).message);
+    console.warn("[DB] getActiveKeywords failed, using defaults:", (error as Error).message);
     return [];
   }
 }
@@ -418,16 +400,16 @@ export async function getAllKeywords() {
   }
 }
 
-export async function addKeyword(keyword: string, type: 'include' | 'exclude' = 'include'): Promise<boolean> {
+export async function addKeyword(keyword: string): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
   try {
-    await db.insert(keywords).values({ keyword, type, createdAt: new Date() });
+    await db.insert(keywords).values({ keyword });
     return true;
   } catch (error: any) {
     if (error.code === "ER_DUP_ENTRY") {
-      // Already exists, try to reactivate with correct type
-      await db.update(keywords).set({ isActive: 1, type }).where(eq(keywords.keyword, keyword));
+      // Already exists, try to reactivate
+      await db.update(keywords).set({ isActive: 1 }).where(eq(keywords.keyword, keyword));
       return true;
     }
     console.error("[DB] Failed to add keyword:", error.message);
@@ -459,7 +441,7 @@ export async function addFavorite(articleId: number, note?: string): Promise<boo
     const existing = await db.select().from(favorites)
       .where(eq(favorites.articleId, articleId)).limit(1);
     if (existing.length > 0) return true; // Already favorited
-    await db.insert(favorites).values({ articleId, note: note || null, createdAt: new Date() });
+    await db.insert(favorites).values({ articleId, note: note || null });
     return true;
   } catch (error: any) {
     console.error("[DB] Failed to add favorite:", error.message);
@@ -527,9 +509,9 @@ export async function insertScrapeJob(job: {
 }): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  // Explicitly pass createdAt to avoid TiDB incompatibility with drizzle's DEFAULT keyword
-  await db.insert(scrapeJobs).values({
-    ...job,
-    createdAt: new Date(),
-  });
+  try {
+    await db.insert(scrapeJobs).values(job);
+  } catch (error) {
+    console.warn("[DB] insertScrapeJob failed:", (error as Error).message);
+  }
 }

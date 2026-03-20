@@ -11,9 +11,27 @@ services:
         value: "3000"
       - key: DATABASE_URL
         sync: false
-      - key: OPENAI_API_KEY
+      # ─── SMTP Email Configuration ─────────────────────
+      # For QQ Mail: SMTP_HOST=smtp.qq.com, SMTP_PORT=465
+      # For 163 Mail: SMTP_HOST=smtp.163.com, SMTP_PORT=465
+      # For Gmail: SMTP_HOST=smtp.gmail.com, SMTP_PORT=587
+      # SMTP_PASS should be the authorization code (授权码), NOT the login password
+      - key: SMTP_HOST
         sync: false
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      # ─── Email Recipients (comma-separated) ───────────
+      # Example: user1@qq.com,user2@163.com
+      - key: EMAIL_TO
+        sync: false
+      # ─── LLM API Key (for translation & report) ──────
+      # Option 1: Google Gemini (free tier available)
       - key: GEMINI_API_KEY
         sync: false
-      - key: ACCESS_PASSWORD
-        sync: false
+      # Option 2: OpenAI compatible API
+      # - key: OPENAI_API_KEY
+      #   sync: false

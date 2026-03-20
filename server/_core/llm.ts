@@ -235,8 +235,11 @@ const assertApiKey = () => {
   }
 };
 
-// ─── Native Gemini API call ────────────────────────────────
-async function invokeGemini(messages: Array<{ role: string; content: string }>): Promise<InvokeResult> {
+// ─── Native Gemini API call with retry ────────────────────
+async function invokeGemini(
+  messages: Array<{ role: string; content: string }>,
+  retries = 2
+): Promise<InvokeResult> {
   const GEMINI_MODEL = "gemini-2.5-flash";
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${ENV.geminiApiKey}`;
 
@@ -261,33 +264,50 @@ async function invokeGemini(messages: Array<{ role: string; content: string }>):
   }
   payload.generationConfig = { maxOutputTokens: 8192 };
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${errorText}`);
+      }
+
+      const data = await response.json() as any;
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+
+      return {
+        id: "gemini",
+        object: "chat.completion",
+        created: Date.now(),
+        model: GEMINI_MODEL,
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: text },
+          finish_reason: "stop",
+        }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      } as InvokeResult;
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[LLM] Gemini attempt ${attempt + 1}/${retries + 1} failed:`, err.message);
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1))); // Exponential backoff
+      }
+    }
   }
 
-  const data = await response.json() as any;
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-
-  // Return in OpenAI-compatible format
-  return {
-    id: "gemini",
-    object: "chat.completion",
-    created: Date.now(),
-    model: GEMINI_MODEL,
-    choices: [{
-      index: 0,
-      message: { role: "assistant", content: text },
-      finish_reason: "stop",
-    }],
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-  } as InvokeResult;
+  throw lastError || new Error("Gemini invoke failed after retries");
 }
 
 const normalizeResponseFormat = ({

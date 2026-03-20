@@ -1,6 +1,5 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
-import { ENV } from "./_core/env";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
@@ -11,7 +10,6 @@ import {
   insertNewsArticles,
   insertScrapeJob,
   getActiveKeywords,
-  getActiveExcludeKeywords,
   getAllKeywords,
   addKeyword,
   removeKeyword,
@@ -32,11 +30,14 @@ import {
 } from "./scraper";
 import nodemailer from "nodemailer";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
+import { ENV } from "./_core/env";
 
 // ─── Helper: get yesterday's date range ────────────────────
 function getYesterdayRange(): { start: string; end: string } {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Convert to UTC+8
+  const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const today = new Date(utc8.getUTCFullYear(), utc8.getUTCMonth(), utc8.getUTCDate());
   const dayOfWeek = today.getDay(); // 0=Sun, 1=Mon, ...
 
   let startDate: Date;
@@ -84,37 +85,54 @@ async function sendNewsEmail(
     return { success: false, message: "该日期范围内无新闻数据", emailHtml };
   }
 
-  const smtpHost = process.env.SMTP_HOST;
-  const smtpPort = process.env.SMTP_PORT;
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
+  // Read SMTP config from ENV (centralized)
+  const smtpHost = ENV.smtpHost;
+  const smtpPort = ENV.smtpPort;
+  const smtpUser = ENV.smtpUser;
+  const smtpPass = ENV.smtpPass;
+  const emailTo = ENV.emailTo;
 
   if (!smtpHost || !smtpUser || !smtpPass) {
     return {
       success: false,
-      message: "SMTP邮件服务未配置。请在设置中配置SMTP_HOST、SMTP_PORT、SMTP_USER、SMTP_PASS环境变量。",
+      message: "SMTP邮件服务未配置。请在Render环境变量中配置SMTP_HOST、SMTP_PORT、SMTP_USER、SMTP_PASS。",
+      emailHtml,
+      previewOnly: true,
+    };
+  }
+
+  if (!emailTo) {
+    return {
+      success: false,
+      message: "收件人未配置。请在Render环境变量中配置EMAIL_TO（多个收件人用逗号分隔）。",
       emailHtml,
       previewOnly: true,
     };
   }
 
   try {
+    const port = parseInt(smtpPort || "465");
     const transporter = nodemailer.createTransport({
       host: smtpHost,
-      port: parseInt(smtpPort || "465"),
-      secure: parseInt(smtpPort || "465") === 465,
+      port,
+      secure: port === 465,
       auth: { user: smtpUser, pass: smtpPass },
+      // Connection timeout settings
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
 
     await transporter.sendMail({
       from: smtpUser,
-      to: "chenhzuojuan1@qq.com",
+      to: emailTo,
       subject: `境外交易所新闻汇总 (${dateRange.start} ~ ${dateRange.end})`,
       html: emailHtml,
     });
 
-    return { success: true, message: "邮件发送成功", emailHtml };
+    return { success: true, message: `邮件发送成功，已发送至 ${emailTo}`, emailHtml };
   } catch (error: any) {
+    console.error("[Email] Send failed:", error);
     return {
       success: false,
       message: `邮件发送失败: ${error.message}`,
@@ -135,17 +153,20 @@ async function performScrape(
   articlesFiltered: number;
   articlesInserted: number;
 }> {
-  // Get active include/exclude keywords from database
-  const activeKeywords = await getActiveKeywords();
-  const excludeKeywords = await getActiveExcludeKeywords();
-  const keywordList = activeKeywords.length > 0 ? activeKeywords : KEYWORDS;
+  // Get active keywords from database
+  let keywordList: string[];
+  try {
+    const activeKeywords = await getActiveKeywords();
+    keywordList = activeKeywords.length > 0 ? activeKeywords : KEYWORDS;
+  } catch {
+    keywordList = KEYWORDS;
+  }
 
   const { articles: scraped, totalScanned } = await scrapeNews(
     startDate,
     endDate,
     maxPages,
-    keywordList,
-    excludeKeywords
+    keywordList
   );
 
   if (scraped.length === 0) {
@@ -158,8 +179,13 @@ async function performScrape(
   }
 
   // Translate titles
-  const titles = scraped.map((a) => a.title);
-  const translations = await translateTitles(titles);
+  let translations = new Map<string, string>();
+  try {
+    const titles = scraped.map((a) => a.title);
+    translations = await translateTitles(titles);
+  } catch (err) {
+    console.error("[Scrape] Translation failed, continuing without translations:", err);
+  }
 
   // Insert into database
   const dbArticles = scraped.map((a) => ({
@@ -171,7 +197,6 @@ async function performScrape(
     matchedKeywords: a.matchedKeywords.join(","),
     summary: a.summary,
     isRelevant: 1,
-    createdAt: new Date(), // Explicitly pass to avoid TiDB DEFAULT keyword issue
   }));
 
   const inserted = await insertNewsArticles(dbArticles);
@@ -193,26 +218,90 @@ async function performScrape(
   };
 }
 
-// ─── Cron job: daily auto scrape at 08:30 on weekdays ──────
+// ─── Startup auto-scrape: check and backfill yesterday's news ──
+let _startupScrapeCompleted = false;
+
+async function startupAutoScrape() {
+  if (_startupScrapeCompleted) return;
+  _startupScrapeCompleted = true;
+
+  // Wait a few seconds for DB to be ready
+  await new Promise((r) => setTimeout(r, 5000));
+
+  try {
+    const range = getYesterdayRange();
+    console.log(`[Startup] Checking if yesterday's news exists (${range.start} ~ ${range.end})...`);
+
+    const existing = await getNewsByDateRange(range.start, range.end);
+    if (existing.length > 0) {
+      console.log(`[Startup] Yesterday's news already exists (${existing.length} articles), skipping auto-scrape`);
+      return;
+    }
+
+    console.log("[Startup] No yesterday's news found, triggering auto-scrape...");
+    const result = await performScrape(range.start, range.end, 15);
+    console.log(`[Startup] Auto-scrape completed: ${result.message}`);
+
+    // Auto send email after startup scrape
+    if (result.articlesInserted > 0) {
+      try {
+        const articles = await getNewsByDateRange(range.start, range.end);
+        const emailResult = await sendNewsEmail(
+          articles.map((a) => ({
+            title: a.title,
+            titleChinese: a.titleChinese,
+            publishDate: a.publishDate,
+            url: a.url,
+            matchedKeywords: a.matchedKeywords,
+          })),
+          range
+        );
+        console.log(`[Startup] Email: ${emailResult.message}`);
+      } catch (emailErr) {
+        console.error("[Startup] Email send failed:", emailErr);
+      }
+    }
+  } catch (err) {
+    console.error("[Startup] Auto-scrape failed:", err);
+  }
+}
+
+// Trigger startup scrape (non-blocking)
+startupAutoScrape();
+
+// ─── Cron job: daily auto scrape ──────────────────────────
+// Improved: check every 5 minutes, trigger at 08:00-08:59 if not yet scraped today
 let cronInterval: ReturnType<typeof setInterval> | null = null;
+let _lastCronScrapeDate = ""; // Track last scrape date to avoid duplicates
 
 function startDailyCron() {
   if (cronInterval) return; // Already running
 
-  // Check every minute
+  // Check every 5 minutes (more resilient than every 1 minute)
   cronInterval = setInterval(async () => {
     const now = new Date();
     // Convert to UTC+8 (China Standard Time)
     const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
     const hours = utc8.getUTCHours();
-    const minutes = utc8.getUTCMinutes();
     const dayOfWeek = utc8.getUTCDay(); // 0=Sun, 6=Sat
+    const todayStr = `${utc8.getUTCFullYear()}-${String(utc8.getUTCMonth() + 1).padStart(2, "0")}-${String(utc8.getUTCDate()).padStart(2, "0")}`;
 
-    // Only run at 08:30 on weekdays (Mon-Fri)
-    if (hours === 8 && minutes === 30 && dayOfWeek >= 1 && dayOfWeek <= 5) {
-      console.log("[CRON] Triggering daily news scrape at 08:30 CST...");
+    // Run between 08:00-09:59 on weekdays, but only once per day
+    if (hours >= 8 && hours <= 9 && dayOfWeek >= 1 && dayOfWeek <= 5) {
+      if (_lastCronScrapeDate === todayStr) return; // Already scraped today
+      _lastCronScrapeDate = todayStr;
+
+      console.log(`[CRON] Triggering daily news scrape at ${hours}:${String(utc8.getUTCMinutes()).padStart(2, "0")} CST...`);
       try {
         const range = getYesterdayRange();
+
+        // Check if already have data
+        const existing = await getNewsByDateRange(range.start, range.end);
+        if (existing.length > 0) {
+          console.log(`[CRON] Yesterday's news already exists (${existing.length} articles), skipping`);
+          return;
+        }
+
         const result = await performScrape(range.start, range.end, 15);
         console.log(`[CRON] Scrape completed: ${result.message}`);
 
@@ -233,11 +322,13 @@ function startDailyCron() {
         }
       } catch (err) {
         console.error("[CRON] Daily scrape failed:", err);
+        // Reset so it can retry next interval
+        _lastCronScrapeDate = "";
       }
     }
-  }, 60 * 1000); // Check every 60 seconds
+  }, 5 * 60 * 1000); // Check every 5 minutes
 
-  console.log("[CRON] Daily auto-scrape scheduled for 08:30 CST on weekdays");
+  console.log("[CRON] Daily auto-scrape scheduled for 08:00-09:59 CST on weekdays");
 }
 
 // Start cron on server boot
@@ -254,29 +345,28 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
-    // Check if site password protection is enabled
-    passwordRequired: publicProcedure.query(() => {
-      return { required: Boolean(ENV.accessPassword) };
-    }),
-    // Verify site access password
-    verifyPassword: publicProcedure
-      .input(z.object({ password: z.string() }))
-      .mutation(({ input }) => {
-        if (!ENV.accessPassword) {
-          return { success: true };
-        }
-        if (input.password === ENV.accessPassword) {
-          return { success: true };
-        }
-        return { success: false, error: "密码错误，请重试" };
-      }),
   }),
 
   news: router({
-    // Get yesterday's news (with weekend logic)
+    // Get yesterday's news (with weekend logic) - AUTO SCRAPE IF EMPTY
     yesterday: publicProcedure.query(async () => {
       const range = getYesterdayRange();
-      const articles = await getNewsByDateRange(range.start, range.end);
+      let articles = await getNewsByDateRange(range.start, range.end);
+
+      // KEY FIX: If no articles found, auto-trigger scrape
+      if (articles.length === 0) {
+        console.log(`[Yesterday] No articles found for ${range.start}~${range.end}, auto-scraping...`);
+        try {
+          const result = await performScrape(range.start, range.end, 15);
+          console.log(`[Yesterday] Auto-scrape: ${result.message}`);
+          if (result.articlesInserted > 0) {
+            articles = await getNewsByDateRange(range.start, range.end);
+          }
+        } catch (err) {
+          console.error("[Yesterday] Auto-scrape failed:", err);
+        }
+      }
+
       return { articles, dateRange: range };
     }),
 
@@ -380,101 +470,49 @@ export const appRouter = router({
         return { html: emailHtml, articleCount: articles.length };
       }),
   }),
-  // ─── Debug ───────────────────────────────────────────────────
-  debug: router({
-    envCheck: publicProcedure.query(() => {
-      return {
-        hasGeminiKey: !!(process.env.GEMINI_API_KEY),
-        hasOpenAiKey: !!(process.env.OPENAI_API_KEY),
-        hasForgeKey: !!(process.env.BUILT_IN_FORGE_API_KEY),
-        geminiKeyPrefix: process.env.GEMINI_API_KEY?.slice(0, 8) ?? "(not set)",
-      };
-    }),
-    testLLM: publicProcedure.mutation(async () => {
-      try {
-        const { invokeLLM } = await import("./_core/llm");
-        const response = await invokeLLM({
-          messages: [{ role: "user", content: "Say hello in Chinese in one sentence." }],
-        });
-        const content = response.choices[0]?.message?.content;
-        return { success: true, content, model: response.model };
-      } catch (err: any) {
-        return { success: false, error: err?.message ?? String(err) };
-      }
-    }),
-  }),
+
   // ─── Report generation ────────────────────────────────────────
   report: router({
     generate: publicProcedure
       .input(
         z.object({
-          articleIds: z.array(z.number().int().positive()).max(20).default([]),
-          // Optional extra content from uploaded files or pasted text
-          extraContent: z.string().max(50000).optional(),
+          articleIds: z.array(z.number().int().positive()).min(1).max(20),
         })
       )
       .mutation(async ({ input }) => {
-        const hasArticles = input.articleIds.length > 0;
-        const hasExtra = !!(input.extraContent && input.extraContent.trim());
-
-        if (!hasArticles && !hasExtra) {
-          return { report: "", message: "请选择新闻或上传文件内容" };
+        // 1. Get selected articles from DB
+        const articles = await getNewsByIds(input.articleIds);
+        if (articles.length === 0) {
+          return { report: "", message: "未找到选中的新闻" };
         }
 
-        const articlesWithContent: Array<{
-          title: string;
-          titleChinese: string | null;
-          publishDate: string;
-          url: string;
-          matchedKeywords: string;
-          fullContent: string;
-        }> = [];
-
-        // 1. Get selected articles from DB and fetch full content
-        if (hasArticles) {
-          const articles = await getNewsByIds(input.articleIds);
-          const batchSize = 5;
-          for (let i = 0; i < articles.length; i += batchSize) {
-            const batch = articles.slice(i, i + batchSize);
-            const contents = await Promise.all(
-              batch.map((a) => fetchArticleContent(a.url))
-            );
-            for (let j = 0; j < batch.length; j++) {
-              articlesWithContent.push({
-                title: batch[j].title,
-                titleChinese: batch[j].titleChinese,
-                publishDate: batch[j].publishDate,
-                url: batch[j].url,
-                matchedKeywords: batch[j].matchedKeywords,
-                fullContent: contents[j] || batch[j].summary || "",
-              });
-            }
+        // 2. Fetch full content from original URLs (parallel, max 5 concurrent)
+        const articlesWithContent = [];
+        const batchSize = 5;
+        for (let i = 0; i < articles.length; i += batchSize) {
+          const batch = articles.slice(i, i + batchSize);
+          const contents = await Promise.all(
+            batch.map((a) => fetchArticleContent(a.url))
+          );
+          for (let j = 0; j < batch.length; j++) {
+            articlesWithContent.push({
+              title: batch[j].title,
+              titleChinese: batch[j].titleChinese,
+              publishDate: batch[j].publishDate,
+              url: batch[j].url,
+              matchedKeywords: batch[j].matchedKeywords,
+              fullContent: contents[j] || batch[j].summary || "",
+            });
           }
-        }
-
-        // 2. Append extra content as an additional article entry
-        if (hasExtra) {
-          articlesWithContent.push({
-            title: "补充材料",
-            titleChinese: "补充材料",
-            publishDate: new Date().toISOString().split("T")[0],
-            url: "",
-            matchedKeywords: "",
-            fullContent: input.extraContent!.trim(),
-          });
         }
 
         // 3. Generate report via LLM
         const report = await generateReport(articlesWithContent);
 
-        const parts = [];
-        if (hasArticles) parts.push(`${input.articleIds.length} 条新闻`);
-        if (hasExtra) parts.push("1 份补充材料");
-
         return {
           report,
-          message: `成功生成报告，包含 ${parts.join(" + ")}`,
-          articleCount: articlesWithContent.length,
+          message: `成功生成报告，包含 ${articles.length} 条新闻`,
+          articleCount: articles.length,
         };
       }),
   }),
@@ -600,12 +638,9 @@ export const appRouter = router({
 
     // Add a new keyword
     add: publicProcedure
-      .input(z.object({
-        keyword: z.string().min(1).max(100),
-        type: z.enum(['include', 'exclude']).optional().default('include'),
-      }))
+      .input(z.object({ keyword: z.string().min(1).max(100) }))
       .mutation(async ({ input }) => {
-        const success = await addKeyword(input.keyword.trim(), input.type);
+        const success = await addKeyword(input.keyword.trim());
         return { success, message: success ? "关键词添加成功" : "关键词添加失败" };
       }),
 
@@ -627,6 +662,23 @@ export const appRouter = router({
         const success = await toggleKeyword(input.id, input.isActive);
         return { success };
       }),
+  }),
+
+  // ─── Debug / health check ──────────────────────────────────────
+  debug: router({
+    envCheck: publicProcedure.query(() => {
+      return {
+        hasDatabase: !!process.env.DATABASE_URL,
+        hasSmtp: !!(ENV.smtpHost && ENV.smtpUser && ENV.smtpPass),
+        hasEmailTo: !!ENV.emailTo,
+        hasForgeApiKey: !!ENV.forgeApiKey,
+        hasGeminiApiKey: !!ENV.geminiApiKey,
+        smtpHost: ENV.smtpHost ? `${ENV.smtpHost.substring(0, 10)}...` : "未配置",
+        emailTo: ENV.emailTo ? `${ENV.emailTo.substring(0, 15)}...` : "未配置",
+        nodeEnv: process.env.NODE_ENV || "development",
+        startupScrapeCompleted: _startupScrapeCompleted,
+      };
+    }),
   }),
 });
 
