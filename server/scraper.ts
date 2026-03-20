@@ -81,6 +81,14 @@ const EXCLUDE_PATTERNS = [
   /\bbell ceremony\b/i,                      // listing ceremony
   /\bopening bell\b/i,                       // listing ceremony
   /\bclosing bell\b/i,                       // listing ceremony
+  /\bprime standard\b/i,                     // Frankfurt Prime Standard listing
+  /\bgeneral standard\b/i,                   // Frankfurt General Standard listing
+  /\bnew in the\b.*\bstandard\b/i,            // "New In The Prime/General Standard"
+  /\bwelcomes?\b.*\bto\b.*\b(?:trading|listing|market|board|exchange)\b/i, // "Exchange welcomes XYZ to trading"
+  /\bjoins?\b.*\b(?:exchange|market|segment)\b/i, // "XYZ joins the exchange"
+  /\bmoves? to\b.*\b(?:main|prime|standard)\b/i,  // "XYZ moves to main board"
+  /\btransfers? to\b.*\b(?:main|prime|standard)\b/i, // "XYZ transfers to..."
+  /\blisted on\b/i,                           // "XYZ listed on exchange"
   // ── Low-value periodic content ──
   /\bweekly report\b/i,                      // exchange weekly reports
   /\bweekly summary\b/i,                     // exchange weekly summaries
