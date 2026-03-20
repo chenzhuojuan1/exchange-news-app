@@ -17,6 +17,6 @@ export const ENV = {
   smtpPass: process.env.SMTP_PASS ?? "",
   // Email recipients (comma-separated)
   emailTo: process.env.EMAIL_TO ?? "",
-  // Site access password
-  sitePassword: process.env.SITE_PASSWORD ?? "",
+  // Site access password (uses ACCESS_PASSWORD env var)
+  sitePassword: process.env.ACCESS_PASSWORD ?? process.env.SITE_PASSWORD ?? "",
 };
