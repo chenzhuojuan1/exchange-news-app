@@ -8,12 +8,15 @@ export const KEYWORDS = [
   "NASDAQ", "NYSE", "LSEG", "JPX", "Deutsche",
   "TMX", "SGX", "HKEX", "SEHK", "KRX", "ADX",
   "EURONEXT", "SIX", "DFM",
+  "LME", "Eurex", "EEX", "ATHEX",
   // Regulators
   "SEC", "FCA", "SFC", "ESMA", "MAS", "RBI", "CIRO",
   // International organizations
   "IOSCO", "ISDA", "FSB",
   // Regional
   "Saudi",
+  // Additional regulators
+  "ASIC", "SIFMA", "FIA",
 ];
 
 // ── Long-form phrases: full names + policy/regulatory themes ──
@@ -44,6 +47,20 @@ const KEYWORD_PHRASES = [
   "cross-border",                           // cross-border regulatory topics
   "mutual recognition",                     // regulatory mutual recognition
   "memorandum of understanding",            // MoU between regulators
+  // ── Important exchanges (full names) ──
+  "Bursa Malaysia",                          // Malaysian exchange
+  "Warsaw Stock Exchange",                    // Polish exchange
+  "Taiwan Futures Exchange",                  // Taiwan derivatives exchange
+  "London Metal Exchange",                    // → LME
+  // ── Liquidity & macro regulation ──
+  "liquidity regulation",                     // liquidity regulatory reform
+  // ── Digital assets & tokenisation ──
+  "tokenized securities",                     // tokenized securities regulation
+  "tokenised securities",                     // British spelling
+  "tokenised finance",                        // tokenised finance roadmap
+  "digital euro",                             // ECB digital euro
+  "digital currency ETF",                     // digital currency ETF rules
+  "CBDC",                                     // central bank digital currency
 ];
 
 // Patterns for irrelevant news to exclude
@@ -57,6 +74,8 @@ const EXCLUDE_PATTERNS = [
   /\bannual report\b/i, /\bdividend\b/i,
   /\bshare buyback\b/i, /\bshare repurchase\b/i, /\bstock purchase\b/i,
   /\bacquisition of shares\b/i, /\bequity purchase\b/i,
+  // ── Commissioner (individual commissioner speeches excluded, but SEC Chair preserved below) ──
+  /\bcommissioner\b/i,
   // ── Keynote (general keynotes excluded, but SEC Chair speeches preserved below) ──
   /\bkeynote\b/i,
   // ── Individual listed company news (not exchange/regulator level) ──
@@ -73,6 +92,11 @@ const EXCLUDE_PATTERNS = [
   /\bweekly report\b/i,                      // exchange weekly reports
   /\bweekly summary\b/i,                     // exchange weekly summaries
   /\bscholarship\b/i,                        // scholarship programs
+  /\bmonthly report\b/i,                      // exchange monthly reports
+  /\bmonthly summary\b/i,                     // exchange monthly summaries
+  /\bmonthly review\b/i,                      // exchange monthly reviews
+  /\bmonthly bulletin\b/i,                    // exchange monthly bulletins
+  /\bmonthly volumes?\b/i,                    // exchange monthly volume reports
   // ── China exchanges as subject (not relevant to target audience) ──
   /\bShanghai Futures Exchange\b/i,
   /\bShanghai International Energy Exchange\b/i,
