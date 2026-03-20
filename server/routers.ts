@@ -147,7 +147,8 @@ async function sendNewsEmail(
 async function performScrape(
   startDate?: string,
   endDate?: string,
-  maxPages = 10
+  maxPages = 10,
+  forceRefresh = false
 ): Promise<{
   message: string;
   articlesFound: number;
@@ -163,9 +164,10 @@ async function performScrape(
     keywordList = KEYWORDS;
   }
 
-  // Mark old articles in this date range as irrelevant before re-scraping
-  // They will be re-activated (isRelevant=1) via upsert if they match new filters
-  if (startDate && endDate) {
+  // Only mark old articles as irrelevant when user manually triggers re-scrape (forceRefresh)
+  // Auto-scrape (startup/cron/yesterday) should NOT invalidate existing data
+  if (forceRefresh && startDate && endDate) {
+    console.log(`[Scrape] Force refresh: marking ${startDate}~${endDate} as irrelevant before re-scraping`);
     await markDateRangeIrrelevant(startDate, endDate);
   }
 
@@ -429,7 +431,8 @@ export const appRouter = router({
         }).optional()
       )
       .mutation(async ({ input }) => {
-        return performScrape(input?.startDate, input?.endDate, input?.maxPages ?? 10);
+        // Manual scrape uses forceRefresh=true to clear old data and re-apply filters
+        return performScrape(input?.startDate, input?.endDate, input?.maxPages ?? 10, true);
       }),
 
     // Send email with news
