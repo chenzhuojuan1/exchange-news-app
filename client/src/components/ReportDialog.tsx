@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { FileText, Loader2, Copy, Check, FileDown, Upload, X, PlusCircle } from "lucide-react";
+import { FileText, Loader2, Copy, Check, FileDown, Upload, X, PlusCircle, Download } from "lucide-react";
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
@@ -36,6 +36,37 @@ export function ReportDialog({ selectedIds, onClearSelection }: ReportDialogProp
     },
     onError: (err) => {
       toast.error("报告生成失败", { description: err.message });
+    },
+  });
+
+  const exportRaw = trpc.report.exportRaw.useMutation({
+    onSuccess: (result) => {
+      if (!result.rawContent) {
+        toast.error(result.message);
+        return;
+      }
+      // Combine raw content with extra content if any
+      let fullText = result.rawContent;
+      if (extraContent.trim()) {
+        fullText += "\n\n========== 补充材料 ==========\n";
+        if (fileName) fullText += `文件名: ${fileName}\n\n`;
+        fullText += extraContent.trim() + "\n";
+      }
+      // Download as text file
+      const blob = new Blob([fullText], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const today = new Date().toISOString().slice(0, 10);
+      a.download = `原始全文_${today}_${result.articleCount}条.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`已下载 ${result.articleCount} 条新闻原始全文`);
+    },
+    onError: (err) => {
+      toast.error("下载失败", { description: err.message });
     },
   });
 
@@ -142,6 +173,14 @@ export function ReportDialog({ selectedIds, onClearSelection }: ReportDialogProp
       return;
     }
     exportWord.mutate({ reportMarkdown: report });
+  };
+
+  const handleExportRaw = () => {
+    if (selectedIds.length === 0) {
+      toast.error("请先选择新闻");
+      return;
+    }
+    exportRaw.mutate({ articleIds: selectedIds });
   };
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -347,14 +386,31 @@ export function ReportDialog({ selectedIds, onClearSelection }: ReportDialogProp
             )}
           </div>
           {!report && !generateReport.isPending && (
-            <Button
-              onClick={handleGenerate}
-              disabled={!canGenerate || generateReport.isPending}
-              className="gap-1.5"
-            >
-              <FileText className="h-4 w-4" />
-              {canGenerate ? "生成报告" : "请先选择内容"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {selectedIds.length > 0 && (
+                <Button
+                  variant="outline"
+                  onClick={handleExportRaw}
+                  disabled={exportRaw.isPending}
+                  className="gap-1.5"
+                >
+                  {exportRaw.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  下载原始全文
+                </Button>
+              )}
+              <Button
+                onClick={handleGenerate}
+                disabled={!canGenerate || generateReport.isPending}
+                className="gap-1.5"
+              >
+                <FileText className="h-4 w-4" />
+                {canGenerate ? "生成报告" : "请先选择内容"}
+              </Button>
+            </div>
           )}
         </div>
       </DialogContent>

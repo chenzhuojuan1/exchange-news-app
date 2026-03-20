@@ -498,6 +498,32 @@ export async function getFavoriteArticleIds(): Promise<number[]> {
   }
 }
 
+// ─── Mark old articles as irrelevant before re-scrape ────
+
+export async function markDateRangeIrrelevant(
+  startDate: string,
+  endDate: string
+): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  try {
+    const result = await db
+      .update(newsArticles)
+      .set({ isRelevant: 0 })
+      .where(
+        and(
+          gte(newsArticles.publishDate, startDate),
+          lte(newsArticles.publishDate, endDate)
+        )
+      );
+    console.log(`[DB] Marked articles in ${startDate}~${endDate} as irrelevant for re-scrape`);
+    return 0; // drizzle mysql doesn't return affected rows easily
+  } catch (error) {
+    console.warn("[DB] markDateRangeIrrelevant failed:", (error as Error).message);
+    return 0;
+  }
+}
+
 // ─── Scrape Job Queries ──────────────────────────────────
 
 export async function insertScrapeJob(job: {

@@ -19,6 +19,7 @@ import {
   removeFavorite,
   getFavorites,
   getFavoriteArticleIds,
+  markDateRangeIrrelevant,
 } from "./db";
 import {
   scrapeNews,
@@ -160,6 +161,12 @@ async function performScrape(
     keywordList = activeKeywords.length > 0 ? activeKeywords : KEYWORDS;
   } catch {
     keywordList = KEYWORDS;
+  }
+
+  // Mark old articles in this date range as irrelevant before re-scraping
+  // They will be re-activated (isRelevant=1) via upsert if they match new filters
+  if (startDate && endDate) {
+    await markDateRangeIrrelevant(startDate, endDate);
   }
 
   const { articles: scraped, totalScanned } = await scrapeNews(
@@ -537,12 +544,13 @@ export const appRouter = router({
       .input(
         z.object({
           articleIds: z.array(z.number().int().positive()).min(1).max(20),
+          extraContent: z.string().max(50000).optional(),
         })
       )
       .mutation(async ({ input }) => {
         // 1. Get selected articles from DB
         const articles = await getNewsByIds(input.articleIds);
-        if (articles.length === 0) {
+        if (articles.length === 0 && !input.extraContent) {
           return { report: "", message: "未找到选中的新闻" };
         }
 
@@ -566,12 +574,12 @@ export const appRouter = router({
           }
         }
 
-        // 3. Generate report via LLM
-        const report = await generateReport(articlesWithContent);
+        // 3. Generate report via LLM (include extra content if provided)
+        const report = await generateReport(articlesWithContent, input.extraContent);
 
         return {
           report,
-          message: `成功生成报告，包含 ${articles.length} 条新闻`,
+          message: `成功生成报告，包含 ${articles.length} 条新闻${input.extraContent ? " + 补充材料" : ""}`,
           articleCount: articles.length,
         };
       }),

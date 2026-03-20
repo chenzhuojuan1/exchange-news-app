@@ -519,9 +519,10 @@ export async function generateReport(
     url: string;
     matchedKeywords: string;
     fullContent: string;
-  }>
+  }>,
+  extraContent?: string
 ): Promise<string> {
-  if (articles.length === 0) return "";
+  if (articles.length === 0 && !extraContent) return "";
 
   // Build article summaries for LLM
   const articleTexts = articles.map((a, i) => {
@@ -568,7 +569,7 @@ export async function generateReport(
     const response = await invokeLLM({
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: `请根据以下${articles.length}条新闻原文内容，整理成一份中文报告：\n\n${articleTexts}` },
+        { role: "user", content: `请根据以下${articles.length}条新闻原文内容${extraContent ? "和补充材料" : ""}，整理成一份中文报告：\n\n${articleTexts}${extraContent ? `\n\n===补充材料===\n${extraContent}` : ""}` },
       ],
     });
 
