@@ -354,6 +354,22 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    // Check if password protection is enabled
+    passwordRequired: publicProcedure.query(() => {
+      return { required: !!ENV.sitePassword };
+    }),
+    // Verify the access password
+    verifyPassword: publicProcedure
+      .input(z.object({ password: z.string() }))
+      .mutation(({ input }) => {
+        if (!ENV.sitePassword) {
+          return { success: true };
+        }
+        if (input.password === ENV.sitePassword) {
+          return { success: true };
+        }
+        return { success: false, error: "密码错误，请重试" };
+      }),
   }),
 
   news: router({
