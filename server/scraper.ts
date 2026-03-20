@@ -4,17 +4,21 @@ import { invokeLLM } from "./_core/llm";
 // ─── Keywords ──────────────────────────────────────────────
 // ── Short-form keywords (matched with word-boundary) ──────
 export const KEYWORDS = [
-  "NASDAQ", "NYSE", "SEC", "LSEG", "FCA", "JPX", "Deutsche",
-  "TMX", "SGX", "HKEX", "SFC", "KRX", "Saudi", "ADX", "RBI",
-  "EURONEXT", "SIX", "DFM", "ESMA", "MAS",
-  // ── newly added: only essential missing abbreviations ──
-  "SEHK", "CIRO", "IOSCO", "ISDA",
+  // Major exchanges
+  "NASDAQ", "NYSE", "LSEG", "JPX", "Deutsche",
+  "TMX", "SGX", "HKEX", "SEHK", "KRX", "ADX",
+  "EURONEXT", "SIX", "DFM",
+  // Regulators
+  "SEC", "FCA", "SFC", "ESMA", "MAS", "RBI", "CIRO",
+  // International organizations
+  "IOSCO", "ISDA", "FSB",
+  // Regional
+  "Saudi",
 ];
 
-// ── Long-form phrases: full names of existing keyword orgs ──
-// These ensure articles using full names (not abbreviations) are also caught
+// ── Long-form phrases: full names + policy/regulatory themes ──
 const KEYWORD_PHRASES = [
-  // Full names for orgs already in KEYWORDS
+  // ── Full names for orgs already in KEYWORDS ──
   "Monetary Authority of Singapore",       // → MAS
   "Securities and Futures Commission",      // → SFC
   "Financial Conduct Authority",            // → FCA
@@ -24,23 +28,55 @@ const KEYWORD_PHRASES = [
   "London Stock Exchange",                  // → LSEG
   "Deutsche Boerse",                        // → Deutsche
   "Deutsche Börse",                         // → Deutsche
-  // Phrases for newly added orgs
-  "Canadian Securities",                    // → CSA (covers CSA Regulators)
+  "Canadian Securities",                    // → CSA
   "Canadian Investment Regulatory",         // → CIRO
-  // Cross-border / major policy phrases
-  "Financial Regulatory Forum",             // major bilateral regulatory events
+  "Financial Stability Board",              // → FSB
+  // ── Policy / regulatory / cross-border themes ──
+  "Financial Regulatory Forum",             // bilateral regulatory events
+  "regulatory reform",                      // major regulatory changes
+  "market structure",                       // market structure evolution
+  "policy paper",                           // official policy publications
+  "stock exchange cooperation",             // exchange collaboration
+  "stock exchange collaboration",           // exchange collaboration
+  "exchange cooperation",                   // exchange collaboration
+  "exchange collaboration",                 // exchange collaboration
+  "cross-border",                           // cross-border regulatory topics
+  "mutual recognition",                     // regulatory mutual recognition
+  "memorandum of understanding",            // MoU between regulators
 ];
 
 // Patterns for irrelevant news to exclude
-// NOTE: removed chairman/chairwoman/keynote — regulatory leaders' speeches are important
 const EXCLUDE_PATTERNS = [
+  // ── Personnel changes ──
   /\bappoints?\b/i, /\bnominat/i, /\bresigns?\b/i, /\bretir(?:es?|ing|ement)\b/i,
   /\bCEO\b/, /\bCFO\b/, /\bCOO\b/, /\bCTO\b/,
   /\bboard of directors\b/i,
+  // ── Corporate financials ──
   /\bfinancial results\b/i, /\bearnings report\b/i, /\bquarterly results\b/i,
   /\bannual report\b/i, /\bdividend\b/i,
   /\bshare buyback\b/i, /\bshare repurchase\b/i, /\bstock purchase\b/i,
   /\bacquisition of shares\b/i, /\bequity purchase\b/i,
+  // ── Keynote (general keynotes excluded, but SEC Chair speeches preserved below) ──
+  /\bkeynote\b/i,
+  // ── Individual listed company news (not exchange/regulator level) ──
+  /\bIPO\b/,
+  /\blists? on\b/i,                         // "XYZ lists on Nasdaq"
+  /\bstarts? trading\b/i,                   // "XYZ starts trading on"
+  /\badmitted to trading\b/i,               // "XYZ admitted to trading"
+  /\bnew listing\b/i,                        // individual company listing
+  /\bmarket debut\b/i,                       // individual company debut
+  /\bbell ceremony\b/i,                      // listing ceremony
+  /\bopening bell\b/i,                       // listing ceremony
+  /\bclosing bell\b/i,                       // listing ceremony
+];
+
+// ── Whitelist: override EXCLUDE_PATTERNS for important items ──
+// If title matches any whitelist pattern, it will NOT be excluded
+const WHITELIST_PATTERNS = [
+  /\bSEC\s+Chair/i,                          // SEC Chairman/Chairwoman speeches
+  /\bSEC\s+Commissioner/i,                   // SEC Commissioner speeches
+  /\bregulat/i,                              // regulatory topics override keynote exclusion
+  /\breform/i,                               // reform topics override exclusions
 ];
 
 const BASE_URL = "https://mondovisione.com/media-and-resources/news/";
@@ -161,6 +197,17 @@ function phraseToLabel(phrase: string): string {
     "Canadian Securities": "CSA",
     "Canadian Investment Regulatory": "CIRO",
     "Financial Regulatory Forum": "Regulatory",
+    "Financial Stability Board": "FSB",
+    "regulatory reform": "Regulatory",
+    "market structure": "Policy",
+    "policy paper": "Policy",
+    "stock exchange cooperation": "Cooperation",
+    "stock exchange collaboration": "Cooperation",
+    "exchange cooperation": "Cooperation",
+    "exchange collaboration": "Cooperation",
+    "cross-border": "Cross-border",
+    "mutual recognition": "Regulatory",
+    "memorandum of understanding": "MoU",
     "Japan Exchange Group": "JPX",
     "Hong Kong Exchanges": "HKEX",
     "London Stock Exchange": "LSEG",
@@ -173,6 +220,13 @@ function phraseToLabel(phrase: string): string {
 // ─── Check if article is relevant ──────────────────────────
 export function isRelevantArticle(title: string, summary: string): boolean {
   const combined = `${title} ${summary}`;
+
+  // First check whitelist: if matched, always keep the article
+  for (const wp of WHITELIST_PATTERNS) {
+    if (wp.test(combined)) return true;
+  }
+
+  // Then check exclude patterns
   for (const pattern of EXCLUDE_PATTERNS) {
     if (pattern.test(combined)) return false;
   }
