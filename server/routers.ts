@@ -473,6 +473,66 @@ export const appRouter = router({
 
   // ─── Report generation ────────────────────────────────────────
   report: router({
+    // Export raw full-text content from original URLs (for review or use with other LLMs)
+    exportRaw: publicProcedure
+      .input(
+        z.object({
+          articleIds: z.array(z.number().int().positive()).min(1).max(50),
+        })
+      )
+      .mutation(async ({ input }) => {
+        // 1. Get selected articles from DB
+        const articles = await getNewsByIds(input.articleIds);
+        if (articles.length === 0) {
+          return { rawContent: "", message: "未找到选中的新闻", articleCount: 0 };
+        }
+
+        // 2. Fetch full content from original URLs (parallel, max 5 concurrent)
+        const articlesWithContent: Array<{
+          title: string;
+          publishDate: string;
+          url: string;
+          matchedKeywords: string;
+          fullContent: string;
+        }> = [];
+        const batchSize = 5;
+        for (let i = 0; i < articles.length; i += batchSize) {
+          const batch = articles.slice(i, i + batchSize);
+          const contents = await Promise.all(
+            batch.map((a) => fetchArticleContent(a.url))
+          );
+          for (let j = 0; j < batch.length; j++) {
+            articlesWithContent.push({
+              title: batch[j].title,
+              publishDate: batch[j].publishDate,
+              url: batch[j].url,
+              matchedKeywords: batch[j].matchedKeywords,
+              fullContent: contents[j] || batch[j].summary || "",
+            });
+          }
+        }
+
+        // 3. Build plain text output
+        const rawContent = articlesWithContent.map((a, i) => {
+          return [
+            `========== 新闻 ${i + 1} / ${articlesWithContent.length} ==========`,
+            `标题: ${a.title}`,
+            `日期: ${a.publishDate}`,
+            `关键词: ${a.matchedKeywords}`,
+            `原文链接: ${a.url}`,
+            ``,
+            a.fullContent,
+            ``,
+          ].join("\n");
+        }).join("\n");
+
+        return {
+          rawContent,
+          message: `成功导出 ${articles.length} 条新闻原始内容`,
+          articleCount: articles.length,
+        };
+      }),
+
     generate: publicProcedure
       .input(
         z.object({

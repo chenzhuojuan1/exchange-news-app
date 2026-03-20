@@ -36,6 +36,7 @@ const KEYWORD_PHRASES = [
   "regulatory reform",                      // major regulatory changes
   "market structure",                       // market structure evolution
   "policy paper",                           // official policy publications
+  "capital framework",                      // regulatory capital framework changes
   "stock exchange cooperation",             // exchange collaboration
   "stock exchange collaboration",           // exchange collaboration
   "exchange cooperation",                   // exchange collaboration
@@ -68,6 +69,19 @@ const EXCLUDE_PATTERNS = [
   /\bbell ceremony\b/i,                      // listing ceremony
   /\bopening bell\b/i,                       // listing ceremony
   /\bclosing bell\b/i,                       // listing ceremony
+  // ── Low-value periodic content ──
+  /\bweekly report\b/i,                      // exchange weekly reports
+  /\bweekly summary\b/i,                     // exchange weekly summaries
+  /\bscholarship\b/i,                        // scholarship programs
+  // ── China exchanges as subject (not relevant to target audience) ──
+  /\bShanghai Futures Exchange\b/i,
+  /\bShanghai International Energy Exchange\b/i,
+  /\bShanghai Stock Exchange\b/i,
+  /\bShenzhen Stock Exchange\b/i,
+  /\bBeijing Stock Exchange\b/i,
+  /\bDalian Commodity Exchange\b/i,
+  /\bZhengzhou Commodity Exchange\b/i,
+  /\bChina Financial Futures Exchange\b/i,
 ];
 
 // ── Whitelist: override EXCLUDE_PATTERNS for important items ──
@@ -165,6 +179,20 @@ export function matchKeywords(text: string, keywordList?: string[]): string[] {
 
   // 1. Match short-form keywords with word boundary
   for (const kw of kws) {
+    // Special handling for SEC: must not match "securities"
+    if (kw === "SEC") {
+      // Match standalone "SEC" only (not inside "securities", "section", "sector" etc.)
+      if (/\bSEC\b/.test(text) && !/\bsecurit/i.test(text.replace(/\bSEC\b/g, "___"))) {
+        matched.push(kw);
+      } else if (/\bSEC\b/.test(text)) {
+        // Text has both standalone SEC and "securities" — check if SEC appears independently
+        const withoutSecurities = text.replace(/\bsecurit\w*/gi, "");
+        if (/\bSEC\b/.test(withoutSecurities)) {
+          matched.push(kw);
+        }
+      }
+      continue;
+    }
     const regex = new RegExp(`\\b${kw}\\b`, "i");
     if (regex.test(text) || upper.includes(kw.toUpperCase())) {
       matched.push(kw);
@@ -200,6 +228,7 @@ function phraseToLabel(phrase: string): string {
     "regulatory reform": "Regulatory",
     "market structure": "Policy",
     "policy paper": "Policy",
+    "capital framework": "Policy",
     "stock exchange cooperation": "Cooperation",
     "stock exchange collaboration": "Cooperation",
     "exchange cooperation": "Cooperation",
