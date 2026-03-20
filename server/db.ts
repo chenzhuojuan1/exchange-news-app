@@ -422,7 +422,7 @@ export async function addKeyword(keyword: string, type: 'include' | 'exclude' = 
   const db = await getDb();
   if (!db) return false;
   try {
-    await db.insert(keywords).values({ keyword, type });
+    await db.insert(keywords).values({ keyword, type, createdAt: new Date() });
     return true;
   } catch (error: any) {
     if (error.code === "ER_DUP_ENTRY") {
@@ -459,7 +459,7 @@ export async function addFavorite(articleId: number, note?: string): Promise<boo
     const existing = await db.select().from(favorites)
       .where(eq(favorites.articleId, articleId)).limit(1);
     if (existing.length > 0) return true; // Already favorited
-    await db.insert(favorites).values({ articleId, note: note || null });
+    await db.insert(favorites).values({ articleId, note: note || null, createdAt: new Date() });
     return true;
   } catch (error: any) {
     console.error("[DB] Failed to add favorite:", error.message);
@@ -527,5 +527,9 @@ export async function insertScrapeJob(job: {
 }): Promise<void> {
   const db = await getDb();
   if (!db) return;
-  await db.insert(scrapeJobs).values(job);
+  // Explicitly pass createdAt to avoid TiDB incompatibility with drizzle's DEFAULT keyword
+  await db.insert(scrapeJobs).values({
+    ...job,
+    createdAt: new Date(),
+  });
 }

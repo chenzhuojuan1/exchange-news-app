@@ -171,6 +171,7 @@ async function performScrape(
     matchedKeywords: a.matchedKeywords.join(","),
     summary: a.summary,
     isRelevant: 1,
+    createdAt: new Date(), // Explicitly pass to avoid TiDB DEFAULT keyword issue
   }));
 
   const inserted = await insertNewsArticles(dbArticles);
