@@ -85,11 +85,12 @@ const EXCLUDE_PATTERNS = [
 ];
 
 // ── Whitelist: override EXCLUDE_PATTERNS for important items ──
-// If title matches any whitelist pattern, it will NOT be excluded
+// If TITLE matches any whitelist pattern, it will NOT be excluded
+// NOTE: only checks title, not summary, to avoid false positives
 const WHITELIST_PATTERNS = [
   /\bSEC\s+Chair/i,                          // SEC Chairman/Chairwoman speeches
-  /\bregulat/i,                              // regulatory topics override keynote exclusion
-  /\breform/i,                               // reform topics override exclusions
+  /\bregulat(?:ory)?\s+(?:reform|framework|cooperation|forum)/i, // specific regulatory topics
+  /\breform\b/i,                             // reform topics override exclusions
 ];
 
 const BASE_URL = "https://mondovisione.com/media-and-resources/news/";
@@ -179,17 +180,14 @@ export function matchKeywords(text: string, keywordList?: string[]): string[] {
 
   // 1. Match short-form keywords with word boundary
   for (const kw of kws) {
-    // Special handling for SEC: must not match "securities"
+    // Special handling for SEC: must match standalone uppercase "SEC" only
+    // Must NOT match when SEC appears only as part of "Securities", "Section", "Sector"
     if (kw === "SEC") {
-      // Match standalone "SEC" only (not inside "securities", "section", "sector" etc.)
-      if (/\bSEC\b/.test(text) && !/\bsecurit/i.test(text.replace(/\bSEC\b/g, "___"))) {
+      // Remove all words starting with "sec" in lowercase (securities, section, sector, etc.)
+      const cleaned = text.replace(/\b[Ss]ec(?:urit|tion|tor|ond|ret)\w*/g, "");
+      // Now check if standalone uppercase "SEC" still exists
+      if (/\bSEC\b/.test(cleaned)) {
         matched.push(kw);
-      } else if (/\bSEC\b/.test(text)) {
-        // Text has both standalone SEC and "securities" — check if SEC appears independently
-        const withoutSecurities = text.replace(/\bsecurit\w*/gi, "");
-        if (/\bSEC\b/.test(withoutSecurities)) {
-          matched.push(kw);
-        }
       }
       continue;
     }
@@ -249,12 +247,18 @@ function phraseToLabel(phrase: string): string {
 export function isRelevantArticle(title: string, summary: string): boolean {
   const combined = `${title} ${summary}`;
 
-  // First check whitelist: if matched, always keep the article
-  for (const wp of WHITELIST_PATTERNS) {
-    if (wp.test(combined)) return true;
+  // Hard-exclude patterns that should NEVER be overridden by whitelist
+  const HARD_EXCLUDE = [/\bscholarship\b/i, /\bweekly report\b/i, /\bweekly summary\b/i];
+  for (const pattern of HARD_EXCLUDE) {
+    if (pattern.test(combined)) return false;
   }
 
-  // Then check exclude patterns
+  // Check whitelist on TITLE ONLY (not summary) to avoid false positives
+  for (const wp of WHITELIST_PATTERNS) {
+    if (wp.test(title)) return true;
+  }
+
+  // Then check exclude patterns on combined text
   for (const pattern of EXCLUDE_PATTERNS) {
     if (pattern.test(combined)) return false;
   }
