@@ -90,6 +90,7 @@ const EXCLUDE_PATTERNS = [
   /\bmonthly review\b/i,                      // exchange monthly reviews
   /\bmonthly bulletin\b/i,                    // exchange monthly bulletins
   /\bmonthly volumes?\b/i,                    // exchange monthly volume reports
+  /\bmonthly headlines?\b/i,                   // exchange monthly headlines
   // ── China exchanges as subject (not relevant to target audience) ──
   /\bShanghai Futures Exchange\b/i,
   /\bShanghai International Energy Exchange\b/i,
