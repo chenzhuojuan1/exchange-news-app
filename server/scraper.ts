@@ -74,7 +74,6 @@ const EXCLUDE_PATTERNS = [
 // If title matches any whitelist pattern, it will NOT be excluded
 const WHITELIST_PATTERNS = [
   /\bSEC\s+Chair/i,                          // SEC Chairman/Chairwoman speeches
-  /\bSEC\s+Commissioner/i,                   // SEC Commissioner speeches
   /\bregulat/i,                              // regulatory topics override keynote exclusion
   /\breform/i,                               // reform topics override exclusions
 ];
