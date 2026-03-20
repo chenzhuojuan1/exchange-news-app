@@ -54,13 +54,6 @@ const KEYWORD_PHRASES = [
   "London Metal Exchange",                    // → LME
   // ── Liquidity & macro regulation ──
   "liquidity regulation",                     // liquidity regulatory reform
-  // ── Digital assets & tokenisation ──
-  "tokenized securities",                     // tokenized securities regulation
-  "tokenised securities",                     // British spelling
-  "tokenised finance",                        // tokenised finance roadmap
-  "digital euro",                             // ECB digital euro
-  "digital currency ETF",                     // digital currency ETF rules
-  "CBDC",                                     // central bank digital currency
 ];
 
 // Patterns for irrelevant news to exclude
