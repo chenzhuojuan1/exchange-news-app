@@ -704,3 +704,190 @@ export async function insertScrapeJob(job: {
     console.warn("[DB] insertScrapeJob failed:", (error as Error).message);
   }
 }
+
+// ─── RSS Keywords Queries ────────────────────────────────────
+// Stores per-topic keywords for FT & Economist RSS search.
+// Table: rss_keywords (id, topicKey, keyword, isActive, createdAt)
+
+export interface RssKeyword {
+  id: number;
+  topicKey: string;
+  keyword: string;
+  isActive: number;
+  isBuiltin: number;
+  createdAt: Date;
+}
+
+// Built-in default RSS keywords (~10 per topic)
+const BUILTIN_RSS_KEYWORDS: Array<{ topicKey: string; keyword: string }> = [
+  // 证券交易所
+  { topicKey: "stock_exchange",      keyword: "stock exchange" },
+  { topicKey: "stock_exchange",      keyword: "securities exchange" },
+  { topicKey: "stock_exchange",      keyword: "capital markets" },
+  { topicKey: "stock_exchange",      keyword: "exchange regulation" },
+  { topicKey: "stock_exchange",      keyword: "market infrastructure" },
+  { topicKey: "stock_exchange",      keyword: "trading venue" },
+  { topicKey: "stock_exchange",      keyword: "exchange listing" },
+  { topicKey: "stock_exchange",      keyword: "clearing house" },
+  { topicKey: "stock_exchange",      keyword: "market microstructure" },
+  { topicKey: "stock_exchange",      keyword: "exchange merger" },
+  // 资本市场风险
+  { topicKey: "capital_market_risk", keyword: "market risk" },
+  { topicKey: "capital_market_risk", keyword: "systemic risk" },
+  { topicKey: "capital_market_risk", keyword: "financial stability" },
+  { topicKey: "capital_market_risk", keyword: "market volatility" },
+  { topicKey: "capital_market_risk", keyword: "liquidity risk" },
+  { topicKey: "capital_market_risk", keyword: "credit risk" },
+  { topicKey: "capital_market_risk", keyword: "financial regulation" },
+  { topicKey: "capital_market_risk", keyword: "stress test" },
+  { topicKey: "capital_market_risk", keyword: "capital requirement" },
+  { topicKey: "capital_market_risk", keyword: "market surveillance" },
+  // 绿色金融
+  { topicKey: "green_finance",       keyword: "green finance" },
+  { topicKey: "green_finance",       keyword: "sustainable finance" },
+  { topicKey: "green_finance",       keyword: "ESG" },
+  { topicKey: "green_finance",       keyword: "green bond" },
+  { topicKey: "green_finance",       keyword: "carbon market" },
+  { topicKey: "green_finance",       keyword: "climate risk" },
+  { topicKey: "green_finance",       keyword: "net zero" },
+  { topicKey: "green_finance",       keyword: "sustainable investment" },
+  { topicKey: "green_finance",       keyword: "climate disclosure" },
+  { topicKey: "green_finance",       keyword: "transition finance" },
+  // 人工智能与证券市场
+  { topicKey: "ai_securities",       keyword: "artificial intelligence" },
+  { topicKey: "ai_securities",       keyword: "algorithmic trading" },
+  { topicKey: "ai_securities",       keyword: "AI regulation" },
+  { topicKey: "ai_securities",       keyword: "machine learning" },
+  { topicKey: "ai_securities",       keyword: "fintech" },
+  { topicKey: "ai_securities",       keyword: "robo-advisor" },
+  { topicKey: "ai_securities",       keyword: "AI in finance" },
+  { topicKey: "ai_securities",       keyword: "high-frequency trading" },
+  { topicKey: "ai_securities",       keyword: "digital asset" },
+  { topicKey: "ai_securities",       keyword: "AI governance" },
+];
+
+// Ensure rss_keywords table exists (called from ensureTables)
+export async function ensureRssKeywordsTable(): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`rss_keywords\` (
+        \`id\` int AUTO_INCREMENT NOT NULL,
+        \`topicKey\` varchar(50) NOT NULL,
+        \`keyword\` varchar(200) NOT NULL,
+        \`isActive\` int NOT NULL DEFAULT 1,
+        \`isBuiltin\` int NOT NULL DEFAULT 0,
+        \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+        CONSTRAINT \`rss_keywords_id\` PRIMARY KEY(\`id\`),
+        UNIQUE KEY \`rss_keywords_topic_kw\` (\`topicKey\`, \`keyword\`)
+      )
+    `);
+    console.log("[DB] rss_keywords table ensured");
+  } catch (err) {
+    console.warn("[DB] ensureRssKeywordsTable:", (err as Error).message);
+  }
+}
+
+// Seed built-in RSS keywords (idempotent)
+export async function seedBuiltinRssKeywords(): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    await ensureRssKeywordsTable();
+    for (const row of BUILTIN_RSS_KEYWORDS) {
+      await db.execute(
+        sql`INSERT IGNORE INTO \`rss_keywords\` (\`topicKey\`, \`keyword\`, \`isBuiltin\`, \`isActive\`)
+            VALUES (${row.topicKey}, ${row.keyword}, 1, 1)`
+      );
+    }
+    console.log("[DB] Built-in RSS keywords seeded");
+  } catch (err) {
+    console.warn("[DB] seedBuiltinRssKeywords failed:", (err as Error).message);
+  }
+}
+
+// Get all RSS keywords grouped by topic
+export async function getAllRssKeywords(): Promise<RssKeyword[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    await ensureRssKeywordsTable();
+    const rows = await db.execute(
+      sql`SELECT id, topicKey, keyword, isActive, isBuiltin, createdAt
+          FROM \`rss_keywords\`
+          ORDER BY topicKey ASC, isBuiltin DESC, keyword ASC`
+    );
+    return (rows[0] as unknown as any[]).map((r: any) => ({
+      id: r.id,
+      topicKey: r.topicKey,
+      keyword: r.keyword,
+      isActive: r.isActive,
+      isBuiltin: r.isBuiltin,
+      createdAt: r.createdAt,
+    }));
+  } catch (err) {
+    console.warn("[DB] getAllRssKeywords failed:", (err as Error).message);
+    return [];
+  }
+}
+
+// Get active keywords per topic as a map { topicKey -> keyword[] }
+export async function getActiveRssKeywordMap(): Promise<Record<string, string[]>> {
+  const db = await getDb();
+  if (!db) return {};
+  try {
+    await ensureRssKeywordsTable();
+    const rows = await db.execute(
+      sql`SELECT topicKey, keyword FROM \`rss_keywords\` WHERE isActive = 1`
+    );
+    const map: Record<string, string[]> = {};
+    for (const r of rows[0] as unknown as any[]) {
+      if (!map[r.topicKey]) map[r.topicKey] = [];
+      map[r.topicKey].push(r.keyword);
+    }
+    return map;
+  } catch (err) {
+    console.warn("[DB] getActiveRssKeywordMap failed:", (err as Error).message);
+    return {};
+  }
+}
+
+// Add a custom RSS keyword
+export async function addRssKeyword(topicKey: string, keyword: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  try {
+    await ensureRssKeywordsTable();
+    await db.execute(
+      sql`INSERT INTO \`rss_keywords\` (\`topicKey\`, \`keyword\`, \`isBuiltin\`, \`isActive\`)
+          VALUES (${topicKey}, ${keyword}, 0, 1)`
+    );
+    return true;
+  } catch (err: any) {
+    if (err.code === "ER_DUP_ENTRY") {
+      await db.execute(
+        sql`UPDATE \`rss_keywords\` SET \`isActive\` = 1 WHERE \`topicKey\` = ${topicKey} AND \`keyword\` = ${keyword}`
+      );
+      return true;
+    }
+    console.error("[DB] addRssKeyword failed:", err.message);
+    return false;
+  }
+}
+
+// Remove a custom RSS keyword (builtin keywords cannot be deleted, only toggled)
+export async function removeRssKeyword(id: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  await db.execute(sql`DELETE FROM \`rss_keywords\` WHERE id = ${id} AND isBuiltin = 0`);
+  return true;
+}
+
+// Toggle RSS keyword active/inactive
+export async function toggleRssKeyword(id: number, isActive: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  await db.execute(sql`UPDATE \`rss_keywords\` SET isActive = ${isActive} WHERE id = ${id}`);
+  return true;
+}

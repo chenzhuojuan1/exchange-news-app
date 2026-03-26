@@ -1,94 +1,81 @@
 // ─── RSS Feed Fetcher for FT and Economist ─────────────────
 // Fetches and filters news from Financial Times and The Economist RSS feeds
-// Topics: stock exchanges, capital market risks, green finance, AI in securities markets
+// Four topics: stock exchanges, capital market risks, green finance, AI in securities
 
 export interface RssArticle {
   title: string;
   description: string;
   url: string;
-  publishDate: string; // ISO date string
+  publishDate: string; // YYYY-MM-DD
   source: "ft" | "economist";
   sourceLabel: string;
   matchedTopics: string[];
+  matchedKeywords: string[];
 }
 
-// ─── Topic keywords for filtering ──────────────────────────
-// Four main topics as required:
-// 1. Stock exchanges / securities exchanges
-// 2. Capital market risks
-// 3. Green finance / sustainable finance
-// 4. AI in securities markets
+// ─── Default keywords: ~10 per topic ───────────────────────
+// These are the built-in defaults; users can add/remove via the UI.
+export const DEFAULT_RSS_KEYWORDS: Record<string, string[]> = {
+  stock_exchange: [
+    "stock exchange",
+    "securities exchange",
+    "capital markets",
+    "exchange regulation",
+    "market infrastructure",
+    "trading venue",
+    "exchange listing",
+    "clearing house",
+    "market microstructure",
+    "exchange merger",
+  ],
+  capital_market_risk: [
+    "market risk",
+    "systemic risk",
+    "financial stability",
+    "market volatility",
+    "liquidity risk",
+    "credit risk",
+    "financial regulation",
+    "stress test",
+    "capital requirement",
+    "market surveillance",
+  ],
+  green_finance: [
+    "green finance",
+    "sustainable finance",
+    "ESG",
+    "green bond",
+    "carbon market",
+    "climate risk",
+    "net zero",
+    "sustainable investment",
+    "climate disclosure",
+    "transition finance",
+  ],
+  ai_securities: [
+    "artificial intelligence",
+    "algorithmic trading",
+    "AI regulation",
+    "machine learning",
+    "fintech",
+    "robo-advisor",
+    "AI in finance",
+    "high-frequency trading",
+    "digital asset",
+    "AI governance",
+  ],
+};
 
-export const RSS_TOPICS = {
-  stock_exchange: {
-    label: "证券交易所",
-    labelEn: "Stock Exchange",
-    keywords: [
-      "stock exchange", "securities exchange", "stock market", "equity market",
-      "NASDAQ", "NYSE", "LSEG", "London Stock Exchange", "JPX", "Japan Exchange",
-      "Deutsche Boerse", "Deutsche Börse", "Euronext", "SGX", "HKEX", "Hong Kong Exchange",
-      "KRX", "SIX Exchange", "ASX", "Australian Securities Exchange",
-      "Bursa Malaysia", "Warsaw Stock Exchange", "exchange listing",
-      "exchange regulation", "market infrastructure", "trading venue",
-      "capital markets union", "exchange merger", "exchange acquisition",
-      "clearing house", "central counterparty", "CCP", "settlement",
-      "market microstructure", "order book", "market maker",
-    ],
-  },
-  capital_market_risk: {
-    label: "资本市场风险",
-    labelEn: "Capital Market Risk",
-    keywords: [
-      "capital market risk", "market risk", "systemic risk", "financial risk",
-      "market volatility", "market crash", "market correction", "market turmoil",
-      "liquidity risk", "credit risk", "counterparty risk", "contagion",
-      "financial stability", "financial crisis", "market stress",
-      "risk management", "risk regulation", "prudential regulation",
-      "Basel", "capital requirement", "stress test", "margin call",
-      "short selling", "leverage", "derivatives risk", "options risk",
-      "bond market", "yield curve", "interest rate risk", "currency risk",
-      "sovereign risk", "emerging market risk", "geopolitical risk",
-      "SEC", "FCA", "ESMA", "IOSCO", "FSB", "financial regulation",
-      "market manipulation", "insider trading", "fraud",
-    ],
-  },
-  green_finance: {
-    label: "绿色金融",
-    labelEn: "Green Finance",
-    keywords: [
-      "green finance", "sustainable finance", "ESG", "climate finance",
-      "green bond", "sustainability bond", "social bond", "transition bond",
-      "carbon market", "carbon credit", "carbon trading", "emissions trading",
-      "net zero", "climate risk", "climate disclosure", "TCFD",
-      "sustainable investment", "responsible investment", "impact investing",
-      "green taxonomy", "EU taxonomy", "sustainable fund",
-      "renewable energy finance", "clean energy investment",
-      "biodiversity finance", "nature-based solutions",
-      "SFDR", "sustainable reporting", "ISSB", "CSRD",
-      "greenwashing", "transition finance", "Paris Agreement",
-    ],
-  },
-  ai_securities: {
-    label: "人工智能与证券市场",
-    labelEn: "AI in Securities Markets",
-    keywords: [
-      "artificial intelligence", "machine learning", "AI trading",
-      "algorithmic trading", "algo trading", "high-frequency trading", "HFT",
-      "AI regulation", "AI in finance", "AI financial", "fintech",
-      "robo-advisor", "automated trading", "quantitative trading",
-      "AI risk", "AI oversight", "AI governance", "AI compliance",
-      "natural language processing", "NLP finance", "large language model",
-      "generative AI", "ChatGPT finance", "AI market surveillance",
-      "predictive analytics", "data analytics finance",
-      "blockchain", "DeFi", "digital asset", "cryptocurrency regulation",
-      "tokenization", "digital securities", "crypto exchange",
-    ],
-  },
+// ─── Topic metadata ─────────────────────────────────────────
+export const RSS_TOPIC_META: Record<string, { label: string; labelEn: string }> = {
+  stock_exchange:      { label: "证券交易所",         labelEn: "Stock Exchange" },
+  capital_market_risk: { label: "资本市场风险",       labelEn: "Capital Market Risk" },
+  green_finance:       { label: "绿色金融",           labelEn: "Green Finance" },
+  ai_securities:       { label: "人工智能与证券市场", labelEn: "AI in Securities Markets" },
 };
 
 // ─── RSS Feed URLs ──────────────────────────────────────────
 const RSS_FEEDS = [
-  // Financial Times
   {
     url: "https://www.ft.com/rss/home/international",
     source: "ft" as const,
@@ -101,7 +88,6 @@ const RSS_FEEDS = [
     sourceLabel: "Financial Times - Markets",
     requiresUserAgent: true,
   },
-  // The Economist
   {
     url: "https://www.economist.com/finance-and-economics/rss.xml",
     source: "economist" as const,
@@ -122,32 +108,22 @@ const RSS_FEEDS = [
   },
 ];
 
-// ─── Helper: fetch RSS with timeout ────────────────────────
+// ─── Fetch RSS with timeout ─────────────────────────────────
 async function fetchRss(url: string, requiresUserAgent = false): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
-
   try {
     const headers: Record<string, string> = {
       Accept: "application/rss+xml, application/xml, text/xml, */*",
       "Accept-Language": "en-US,en;q=0.9",
       "Cache-Control": "no-cache",
     };
-
     if (requiresUserAgent) {
       headers["User-Agent"] =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     }
-
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers,
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
+    const response = await fetch(url, { signal: controller.signal, headers });
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     return await response.text();
   } finally {
     clearTimeout(timeout);
@@ -162,39 +138,24 @@ function parseRssItems(xml: string): Array<{
   pubDate: string;
 }> {
   const items: Array<{ title: string; description: string; link: string; pubDate: string }> = [];
-
-  // Extract all <item> blocks
   const itemRegex = /<item[^>]*>([\s\S]*?)<\/item>/gi;
   let itemMatch;
-
   while ((itemMatch = itemRegex.exec(xml)) !== null) {
     const itemXml = itemMatch[1];
-
-    // Extract title (handle CDATA)
     const titleMatch = itemXml.match(/<title[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/i);
     const title = titleMatch ? titleMatch[1].trim() : "";
-
-    // Extract description (handle CDATA)
     const descMatch = itemXml.match(/<description[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/i);
     const description = descMatch ? descMatch[1].replace(/<[^>]+>/g, "").trim() : "";
-
-    // Extract link
     const linkMatch = itemXml.match(/<link[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/link>/i);
     const link = linkMatch ? linkMatch[1].trim() : "";
-
-    // Extract pubDate
     const dateMatch = itemXml.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
     const pubDate = dateMatch ? dateMatch[1].trim() : "";
-
-    if (title && link) {
-      items.push({ title, description, link, pubDate });
-    }
+    if (title && link) items.push({ title, description, link, pubDate });
   }
-
   return items;
 }
 
-// ─── Format date to YYYY-MM-DD ──────────────────────────────
+// ─── Format date ────────────────────────────────────────────
 function formatPubDate(pubDate: string): string {
   if (!pubDate) return new Date().toISOString().split("T")[0];
   try {
@@ -206,27 +167,32 @@ function formatPubDate(pubDate: string): string {
   }
 }
 
-// ─── Match topics ───────────────────────────────────────────
-function matchTopics(title: string, description: string): string[] {
+// ─── Match topics using per-topic keyword lists ─────────────
+function matchTopics(
+  title: string,
+  description: string,
+  topicKeywords: Record<string, string[]>
+): { topics: string[]; keywords: string[] } {
   const text = (title + " " + description).toLowerCase();
-  const matched: string[] = [];
+  const matchedTopics: string[] = [];
+  const matchedKeywords: string[] = [];
 
-  for (const [topicKey, topic] of Object.entries(RSS_TOPICS)) {
-    for (const keyword of topic.keywords) {
-      if (text.includes(keyword.toLowerCase())) {
-        matched.push(topicKey);
-        break; // Only add each topic once
+  for (const [topicKey, kwList] of Object.entries(topicKeywords)) {
+    for (const kw of kwList) {
+      if (text.includes(kw.toLowerCase())) {
+        if (!matchedTopics.includes(topicKey)) matchedTopics.push(topicKey);
+        if (!matchedKeywords.includes(kw)) matchedKeywords.push(kw);
       }
     }
   }
-
-  return matched;
+  return { topics: matchedTopics, keywords: matchedKeywords };
 }
 
 // ─── Main: fetch and filter RSS articles ───────────────────
 export async function fetchRssNews(
   selectedTopics?: string[],
-  maxAgedays = 30
+  maxAgeDays = 30,
+  customKeywords?: Record<string, string[]>
 ): Promise<{
   articles: RssArticle[];
   errors: string[];
@@ -235,7 +201,27 @@ export async function fetchRssNews(
   const errors: string[] = [];
   const allArticles: RssArticle[] = [];
   const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - maxAgedays);
+  cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+
+  // Merge default + custom keywords per topic
+  const topicKeywords: Record<string, string[]> = {};
+  for (const topicKey of Object.keys(DEFAULT_RSS_KEYWORDS)) {
+    const defaults = DEFAULT_RSS_KEYWORDS[topicKey] || [];
+    const custom = customKeywords?.[topicKey] || [];
+    // Combine and deduplicate
+    const combined = [...new Set([...defaults, ...custom].map((k) => k.toLowerCase()))];
+    topicKeywords[topicKey] = combined;
+  }
+
+  // If selectedTopics specified, only use those topics
+  const activeTopics = selectedTopics && selectedTopics.length > 0
+    ? selectedTopics
+    : Object.keys(topicKeywords);
+
+  const activeTopicKeywords: Record<string, string[]> = {};
+  for (const t of activeTopics) {
+    if (topicKeywords[t]) activeTopicKeywords[t] = topicKeywords[t];
+  }
 
   // Fetch all feeds in parallel
   const feedResults = await Promise.allSettled(
@@ -251,27 +237,12 @@ export async function fetchRssNews(
       errors.push(`Feed fetch failed: ${result.reason?.message || "Unknown error"}`);
       continue;
     }
-
     const { feed, items } = result.value;
-
     for (const item of items) {
       const pubDate = formatPubDate(item.pubDate);
-
-      // Filter by age
       if (new Date(pubDate) < cutoffDate) continue;
-
-      // Match topics
-      const matchedTopics = matchTopics(item.title, item.description);
-
-      // Filter by selected topics (if specified)
-      if (selectedTopics && selectedTopics.length > 0) {
-        const hasMatch = selectedTopics.some((t) => matchedTopics.includes(t));
-        if (!hasMatch) continue;
-      } else {
-        // If no topics selected, only include articles that match at least one topic
-        if (matchedTopics.length === 0) continue;
-      }
-
+      const { topics, keywords } = matchTopics(item.title, item.description, activeTopicKeywords);
+      if (topics.length === 0) continue;
       allArticles.push({
         title: item.title,
         description: item.description,
@@ -279,7 +250,8 @@ export async function fetchRssNews(
         publishDate: pubDate,
         source: feed.source,
         sourceLabel: feed.sourceLabel,
-        matchedTopics,
+        matchedTopics: topics,
+        matchedKeywords: keywords,
       });
     }
   }
@@ -295,9 +267,5 @@ export async function fetchRssNews(
   // Sort by date descending
   deduplicated.sort((a, b) => b.publishDate.localeCompare(a.publishDate));
 
-  return {
-    articles: deduplicated,
-    errors,
-    fetchedAt: new Date().toISOString(),
-  };
+  return { articles: deduplicated, errors, fetchedAt: new Date().toISOString() };
 }

@@ -38,7 +38,15 @@ import {
 import nodemailer from "nodemailer";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
 import { ENV } from "./_core/env";
-import { fetchRssNews, RSS_TOPICS } from "./rss";
+import { fetchRssNews, RSS_TOPIC_META, DEFAULT_RSS_KEYWORDS } from "./rss";
+import {
+  getAllRssKeywords,
+  getActiveRssKeywordMap,
+  addRssKeyword,
+  removeRssKeyword,
+  toggleRssKeyword,
+  seedBuiltinRssKeywords,
+} from "./db";
 
 // ─── Helper: get yesterday's date range ────────────────────
 function getYesterdayRange(): { start: string; end: string } {
@@ -297,6 +305,11 @@ startupAutoScrape();
 // Seed built-in exclude rules on startup (non-blocking)
 seedBuiltinExcludeRules().catch((err) =>
   console.error("[Startup] Failed to seed exclude rules:", err)
+);
+
+// Seed built-in RSS keywords on startup (non-blocking)
+seedBuiltinRssKeywords().catch((err) =>
+  console.error("[Startup] Failed to seed RSS keywords:", err)
 );
 
 // ─── Cron job: daily auto scrape ──────────────────────────
@@ -794,16 +807,17 @@ export const appRouter = router({
 
   // ─── RSS Feed Search ──────────────────────────────────────────────────────
   rss: router({
-    // Get topics list
+    // Get topics list with metadata
     topics: publicProcedure.query(() => {
-      return Object.entries(RSS_TOPICS).map(([key, topic]) => ({
+      return Object.entries(RSS_TOPIC_META).map(([key, meta]) => ({
         key,
-        label: topic.label,
-        labelEn: topic.labelEn,
+        label: meta.label,
+        labelEn: meta.labelEn,
+        defaultKeywords: DEFAULT_RSS_KEYWORDS[key] || [],
       }));
     }),
 
-    // Search RSS feeds by topic
+    // Search RSS feeds by topic (uses DB keywords if available)
     search: publicProcedure
       .input(
         z.object({
@@ -812,11 +826,56 @@ export const appRouter = router({
         }).optional()
       )
       .query(async ({ input }) => {
+        // Load active keywords from DB (falls back to defaults if DB empty)
+        let customKeywords: Record<string, string[]> | undefined;
+        try {
+          const dbMap = await getActiveRssKeywordMap();
+          if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
+        } catch {
+          customKeywords = undefined;
+        }
         const result = await fetchRssNews(
           input?.topics && input.topics.length > 0 ? input.topics : undefined,
-          input?.maxAgeDays ?? 30
+          input?.maxAgeDays ?? 30,
+          customKeywords
         );
         return result;
+      }),
+
+    // ── Keyword management ──────────────────────────────────
+    // List all RSS keywords
+    keywords: publicProcedure.query(async () => {
+      return getAllRssKeywords();
+    }),
+
+    // Add a custom RSS keyword
+    addKeyword: publicProcedure
+      .input(z.object({
+        topicKey: z.string().min(1).max(50),
+        keyword: z.string().min(1).max(200).trim(),
+      }))
+      .mutation(async ({ input }) => {
+        const success = await addRssKeyword(input.topicKey, input.keyword);
+        return { success, message: success ? "关键词添加成功" : "关键词添加失败" };
+      }),
+
+    // Remove a custom RSS keyword
+    removeKeyword: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const success = await removeRssKeyword(input.id);
+        return { success, message: success ? "关键词已删除" : "删除失败" };
+      }),
+
+    // Toggle RSS keyword active/inactive
+    toggleKeyword: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        isActive: z.number().int().min(0).max(1),
+      }))
+      .mutation(async ({ input }) => {
+        const success = await toggleRssKeyword(input.id, input.isActive);
+        return { success };
       }),
   }),
 
