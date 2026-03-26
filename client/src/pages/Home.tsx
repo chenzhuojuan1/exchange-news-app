@@ -23,6 +23,7 @@ import {
   Star,
   History,
   Shield,
+  Rss,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useState, useMemo, useRef, useCallback } from "react";
@@ -256,6 +257,12 @@ export default function Home() {
               <Button variant="outline" size="sm" className="gap-2">
                 <Shield className="h-4 w-4" />
                 <span className="hidden sm:inline">排除规则</span>
+              </Button>
+            </Link>
+            <Link href="/rss-search">
+              <Button variant="outline" size="sm" className="gap-2">
+                <Rss className="h-4 w-4" />
+                <span className="hidden sm:inline">FT&amp;Economist</span>
               </Button>
             </Link>
             <StatsPanel />

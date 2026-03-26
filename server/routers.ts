@@ -38,6 +38,7 @@ import {
 import nodemailer from "nodemailer";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
 import { ENV } from "./_core/env";
+import { fetchRssNews, RSS_TOPICS } from "./rss";
 
 // ─── Helper: get yesterday's date range ────────────────────
 function getYesterdayRange(): { start: string; end: string } {
@@ -788,6 +789,34 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const success = await toggleExcludeRule(input.id, input.isActive);
         return { success };
+      }),
+  }),
+
+  // ─── RSS Feed Search ──────────────────────────────────────────────────────
+  rss: router({
+    // Get topics list
+    topics: publicProcedure.query(() => {
+      return Object.entries(RSS_TOPICS).map(([key, topic]) => ({
+        key,
+        label: topic.label,
+        labelEn: topic.labelEn,
+      }));
+    }),
+
+    // Search RSS feeds by topic
+    search: publicProcedure
+      .input(
+        z.object({
+          topics: z.array(z.string()).optional(),
+          maxAgeDays: z.number().int().min(1).max(90).optional().default(30),
+        }).optional()
+      )
+      .query(async ({ input }) => {
+        const result = await fetchRssNews(
+          input?.topics && input.topics.length > 0 ? input.topics : undefined,
+          input?.maxAgeDays ?? 30
+        );
+        return result;
       }),
   }),
 

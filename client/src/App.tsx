@@ -9,6 +9,7 @@ import Home from "./pages/Home";
 import Keywords from "./pages/Keywords";
 import Favorites from "./pages/Favorites";
 import ExcludeRules from "./pages/ExcludeRules";
+import RssSearch from "./pages/RssSearch";
 
 function Router() {
   return (
@@ -17,6 +18,7 @@ function Router() {
       <Route path={"/keywords"} component={Keywords} />
       <Route path={"/exclude-rules"} component={ExcludeRules} />
       <Route path={"/favorites"} component={Favorites} />
+      <Route path={"/rss-search"} component={RssSearch} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>
