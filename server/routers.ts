@@ -20,6 +20,12 @@ import {
   getFavorites,
   getFavoriteArticleIds,
   markDateRangeIrrelevant,
+  getAllExcludeRules,
+  getActiveExcludePatterns,
+  addExcludeRule,
+  removeExcludeRule,
+  toggleExcludeRule,
+  seedBuiltinExcludeRules,
 } from "./db";
 import {
   scrapeNews,
@@ -164,6 +170,14 @@ async function performScrape(
     keywordList = KEYWORDS;
   }
 
+  // Get active exclude patterns from database (user-managed)
+  let dbExcludePatterns: string[] = [];
+  try {
+    dbExcludePatterns = await getActiveExcludePatterns();
+  } catch {
+    dbExcludePatterns = [];
+  }
+
   // Only mark old articles as irrelevant when user manually triggers re-scrape (forceRefresh)
   // Auto-scrape (startup/cron/yesterday) should NOT invalidate existing data
   if (forceRefresh && startDate && endDate) {
@@ -175,7 +189,8 @@ async function performScrape(
     startDate,
     endDate,
     maxPages,
-    keywordList
+    keywordList,
+    dbExcludePatterns.length > 0 ? dbExcludePatterns : undefined
   );
 
   if (scraped.length === 0) {
@@ -278,6 +293,11 @@ async function startupAutoScrape() {
 // Trigger startup scrape (non-blocking)
 startupAutoScrape();
 
+// Seed built-in exclude rules on startup (non-blocking)
+seedBuiltinExcludeRules().catch((err) =>
+  console.error("[Startup] Failed to seed exclude rules:", err)
+);
+
 // ─── Cron job: daily auto scrape ──────────────────────────
 // Improved: check every 5 minutes, trigger at 08:00-08:59 if not yet scraped today
 let cronInterval: ReturnType<typeof setInterval> | null = null;
@@ -354,22 +374,6 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
-    // Check if password protection is enabled
-    passwordRequired: publicProcedure.query(() => {
-      return { required: !!ENV.sitePassword };
-    }),
-    // Verify the access password
-    verifyPassword: publicProcedure
-      .input(z.object({ password: z.string() }))
-      .mutation(({ input }) => {
-        if (!ENV.sitePassword) {
-          return { success: true };
-        }
-        if (input.password === ENV.sitePassword) {
-          return { success: true };
-        }
-        return { success: false, error: "密码错误，请重试" };
-      }),
   }),
 
   news: router({
@@ -725,9 +729,9 @@ export const appRouter = router({
 
     // Add a new keyword
     add: publicProcedure
-      .input(z.object({ keyword: z.string().min(1).max(100) }))
+      .input(z.object({ keyword: z.string().min(1).max(100), type: z.enum(["include", "exclude"]).optional().default("include") }))
       .mutation(async ({ input }) => {
-        const success = await addKeyword(input.keyword.trim());
+        const success = await addKeyword(input.keyword.trim(), input.type);
         return { success, message: success ? "关键词添加成功" : "关键词添加失败" };
       }),
 
@@ -749,9 +753,45 @@ export const appRouter = router({
         const success = await toggleKeyword(input.id, input.isActive);
         return { success };
       }),
+  }),  // ─── Exclude Rules management ──────────────────────────────────────────────
+  excludeRule: router({
+    // List all exclude rules (builtin + user-added)
+    list: publicProcedure.query(async () => {
+      return getAllExcludeRules();
+    }),
+
+    // Add a new user-defined exclude rule
+    add: publicProcedure
+      .input(z.object({
+        pattern: z.string().min(1).max(200),
+        description: z.string().max(300).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const success = await addExcludeRule(input.pattern.trim(), input.description?.trim());
+        return { success, message: success ? "排除规则添加成功" : "排除规则添加失败" };
+      }),
+
+    // Remove a user-defined exclude rule (builtin rules cannot be removed)
+    remove: publicProcedure
+      .input(z.object({ id: z.number().int().positive() }))
+      .mutation(async ({ input }) => {
+        const success = await removeExcludeRule(input.id);
+        return { success, message: success ? "已删除" : "删除失败" };
+      }),
+
+    // Toggle active/inactive
+    toggle: publicProcedure
+      .input(z.object({
+        id: z.number().int().positive(),
+        isActive: z.number().int().min(0).max(1),
+      }))
+      .mutation(async ({ input }) => {
+        const success = await toggleExcludeRule(input.id, input.isActive);
+        return { success };
+      }),
   }),
 
-  // ─── Debug / health check ──────────────────────────────────────
+  // ─── Debug / health check ──────────────────────────────────────────────
   debug: router({
     envCheck: publicProcedure.query(() => {
       return {

@@ -8,12 +8,14 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import Keywords from "./pages/Keywords";
 import Favorites from "./pages/Favorites";
+import ExcludeRules from "./pages/ExcludeRules";
 
 function Router() {
   return (
     <Switch>
       <Route path={"/"} component={Home} />
       <Route path={"/keywords"} component={Keywords} />
+      <Route path={"/exclude-rules"} component={ExcludeRules} />
       <Route path={"/favorites"} component={Favorites} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />

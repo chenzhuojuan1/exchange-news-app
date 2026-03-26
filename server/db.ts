@@ -71,7 +71,19 @@ async function ensureTables(conn: mysql.Connection): Promise<void> {
     `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`summary\` text`,
     `ALTER TABLE \`news_articles\` ADD COLUMN IF NOT EXISTS \`isRelevant\` int NOT NULL DEFAULT 1`,
     `ALTER TABLE \`keywords\` ADD COLUMN IF NOT EXISTS \`isActive\` int NOT NULL DEFAULT 1`,
+    `ALTER TABLE \`keywords\` ADD COLUMN IF NOT EXISTS \`type\` varchar(10) NOT NULL DEFAULT 'include'`,
     `ALTER TABLE \`favorites\` ADD COLUMN IF NOT EXISTS \`note\` text`,
+    // exclude_rules table: stores user-managed exclude patterns (plain text, not regex)
+    `CREATE TABLE IF NOT EXISTS \`exclude_rules\` (
+      \`id\` int AUTO_INCREMENT NOT NULL,
+      \`pattern\` varchar(200) NOT NULL,
+      \`description\` varchar(300),
+      \`isBuiltin\` int NOT NULL DEFAULT 0,
+      \`isActive\` int NOT NULL DEFAULT 1,
+      \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+      CONSTRAINT \`exclude_rules_id\` PRIMARY KEY(\`id\`),
+      CONSTRAINT \`exclude_rules_pattern_unique\` UNIQUE(\`pattern\`)
+    )`
   ];
   for (const stmt of statements) {
     try {
@@ -374,15 +386,14 @@ export async function getNewsByIds(
 
 // ─── Keyword Queries ──────────────────────────────────────
 
-export async function getActiveKeywords(): Promise<string[]> {
+export async function getActiveKeywords() {
   const db = await getDb();
   if (!db) return [];
   try {
-    const rows = await db.select({ keyword: keywords.keyword })
-      .from(keywords)
-      .where(eq(keywords.isActive, 1))
-      .orderBy(keywords.keyword);
-    return rows.map(r => r.keyword);
+    const rows = await db.execute(
+      sql`SELECT keyword FROM \`keywords\` WHERE isActive = 1 AND (\`type\` = 'include' OR \`type\` IS NULL OR \`type\` = '') ORDER BY keyword`
+    );
+    return (rows[0] as unknown as any[]).map((r: any) => r.keyword as string);
   } catch (error) {
     console.warn("[DB] getActiveKeywords failed, using defaults:", (error as Error).message);
     return [];
@@ -400,16 +411,20 @@ export async function getAllKeywords() {
   }
 }
 
-export async function addKeyword(keyword: string): Promise<boolean> {
+export async function addKeyword(keyword: string, type: string = 'include'): Promise<boolean> {
   const db = await getDb();
   if (!db) return false;
   try {
-    await db.insert(keywords).values({ keyword });
+    await db.execute(
+      sql`INSERT INTO \`keywords\` (\`keyword\`, \`type\`, \`isActive\`) VALUES (${keyword}, ${type}, 1)`
+    );
     return true;
   } catch (error: any) {
     if (error.code === "ER_DUP_ENTRY") {
-      // Already exists, try to reactivate
-      await db.update(keywords).set({ isActive: 1 }).where(eq(keywords.keyword, keyword));
+      // Already exists, try to reactivate and update type
+      await db.execute(
+        sql`UPDATE \`keywords\` SET \`isActive\` = 1, \`type\` = ${type} WHERE \`keyword\` = ${keyword}`
+      );
       return true;
     }
     console.error("[DB] Failed to add keyword:", error.message);
@@ -428,6 +443,154 @@ export async function toggleKeyword(id: number, isActive: number): Promise<boole
   const db = await getDb();
   if (!db) return false;
   await db.update(keywords).set({ isActive }).where(eq(keywords.id, id));
+  return true;
+}
+
+// ─── Exclude Rules Queries ──────────────────────────────
+
+export interface ExcludeRule {
+  id: number;
+  pattern: string;
+  description: string | null;
+  isBuiltin: number;
+  isActive: number;
+  createdAt: Date;
+}
+
+// Built-in exclude rules seeded from scraper.ts EXCLUDE_PATTERNS
+const BUILTIN_EXCLUDE_RULES: Array<{ pattern: string; description: string }> = [
+  { pattern: "appoint",          description: "人事任命（appoint/appoints）" },
+  { pattern: "nominat",          description: "提名（nominates/nominated）" },
+  { pattern: "resigns",          description: "辞职（resigns/resign）" },
+  { pattern: "retirement",       description: "退休（retirement/retiring）" },
+  { pattern: "CEO",              description: "首席执行官变动" },
+  { pattern: "CFO",              description: "首席财务官变动" },
+  { pattern: "COO",              description: "首席运营官变动" },
+  { pattern: "CTO",              description: "首席技术官变动" },
+  { pattern: "board of directors", description: "董事会相关" },
+  { pattern: "financial results",  description: "财务业绩" },
+  { pattern: "earnings report",    description: "业绩报告" },
+  { pattern: "quarterly results",  description: "季度业绩" },
+  { pattern: "annual report",      description: "年报" },
+  { pattern: "dividend",           description: "股息" },
+  { pattern: "share buyback",      description: "股份回购" },
+  { pattern: "share repurchase",   description: "股份回购" },
+  { pattern: "stock purchase",     description: "股票购买" },
+  { pattern: "acquisition of shares", description: "股权收购" },
+  { pattern: "equity purchase",    description: "股权购买" },
+  { pattern: "IPO",                description: "新股上市（IPO）" },
+  { pattern: "lists on",           description: "个股上市（lists on）" },
+  { pattern: "starts trading",     description: "开始交易（starts trading）" },
+  { pattern: "admitted to trading", description: "获准交易" },
+  { pattern: "new listing",        description: "新上市公司" },
+  { pattern: "market debut",       description: "市场首秀" },
+  { pattern: "bell ceremony",      description: "敲钟仪式" },
+  { pattern: "opening bell",       description: "开市钟" },
+  { pattern: "closing bell",       description: "收市钟" },
+  { pattern: "weekly report",      description: "每周报告" },
+  { pattern: "weekly summary",     description: "每周摘要" },
+  { pattern: "scholarship",        description: "奖学金" },
+  { pattern: "monthly report",     description: "月度报告" },
+  { pattern: "monthly summary",    description: "月度摘要" },
+  { pattern: "monthly review",     description: "月度回顾" },
+  { pattern: "monthly bulletin",   description: "月度公告" },
+  { pattern: "monthly volumes",    description: "月度成交量" },
+  { pattern: "monthly headlines",  description: "月度头条" },
+  { pattern: "Shanghai Futures Exchange",            description: "上海期货交易所（排除）" },
+  { pattern: "Shanghai International Energy Exchange", description: "上海国际能源交易中心（排除）" },
+  { pattern: "Shanghai Stock Exchange",              description: "上海证券交易所（排除）" },
+  { pattern: "Shenzhen Stock Exchange",              description: "深圳证券交易所（排除）" },
+  { pattern: "Beijing Stock Exchange",               description: "北京证券交易所（排除）" },
+  { pattern: "Dalian Commodity Exchange",            description: "大连商品交易所（排除）" },
+  { pattern: "Zhengzhou Commodity Exchange",         description: "郑州商品交易所（排除）" },
+  { pattern: "China Financial Futures Exchange",     description: "中国金融期货交易所（排除）" },
+];
+
+// Seed built-in exclude rules into DB on first run
+export async function seedBuiltinExcludeRules(): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  try {
+    for (const rule of BUILTIN_EXCLUDE_RULES) {
+      await db.execute(
+        sql`INSERT IGNORE INTO \`exclude_rules\` (\`pattern\`, \`description\`, \`isBuiltin\`, \`isActive\`)
+            VALUES (${rule.pattern}, ${rule.description}, 1, 1)`
+      );
+    }
+    console.log("[DB] Built-in exclude rules seeded");
+  } catch (error) {
+    console.warn("[DB] seedBuiltinExcludeRules failed:", (error as Error).message);
+  }
+}
+
+export async function getAllExcludeRules(): Promise<ExcludeRule[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db.execute(
+      sql`SELECT id, pattern, description, isBuiltin, isActive, createdAt FROM \`exclude_rules\` ORDER BY isBuiltin DESC, pattern ASC`
+    );
+    return (rows[0] as unknown as any[]).map((r: any) => ({
+      id: r.id,
+      pattern: r.pattern,
+      description: r.description,
+      isBuiltin: r.isBuiltin,
+      isActive: r.isActive,
+      createdAt: r.createdAt,
+    }));
+  } catch (error) {
+    console.warn("[DB] getAllExcludeRules failed:", (error as Error).message);
+    return [];
+  }
+}
+
+export async function getActiveExcludePatterns(): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const rows = await db.execute(
+      sql`SELECT pattern FROM \`exclude_rules\` WHERE isActive = 1`
+    );
+    return (rows[0] as unknown as any[]).map((r: any) => r.pattern as string);
+  } catch (error) {
+    console.warn("[DB] getActiveExcludePatterns failed:", (error as Error).message);
+    return [];
+  }
+}
+
+export async function addExcludeRule(pattern: string, description?: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  try {
+    await db.execute(
+      sql`INSERT INTO \`exclude_rules\` (\`pattern\`, \`description\`, \`isBuiltin\`, \`isActive\`)
+          VALUES (${pattern}, ${description || null}, 0, 1)`
+    );
+    return true;
+  } catch (error: any) {
+    if (error.code === "ER_DUP_ENTRY") {
+      await db.execute(
+        sql`UPDATE \`exclude_rules\` SET \`isActive\` = 1 WHERE \`pattern\` = ${pattern}`
+      );
+      return true;
+    }
+    console.error("[DB] Failed to add exclude rule:", error.message);
+    return false;
+  }
+}
+
+export async function removeExcludeRule(id: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  // Only allow deleting non-builtin rules
+  await db.execute(sql`DELETE FROM \`exclude_rules\` WHERE id = ${id} AND isBuiltin = 0`);
+  return true;
+}
+
+export async function toggleExcludeRule(id: number, isActive: number): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  await db.execute(sql`UPDATE \`exclude_rules\` SET isActive = ${isActive} WHERE id = ${id}`);
   return true;
 }
 

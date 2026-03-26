@@ -22,6 +22,7 @@ import {
   XSquare,
   Star,
   History,
+  Shield,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useState, useMemo, useRef, useCallback } from "react";
@@ -249,6 +250,12 @@ export default function Home() {
               <Button variant="outline" size="sm" className="gap-2">
                 <Tag className="h-4 w-4" />
                 <span className="hidden sm:inline">关键词</span>
+              </Button>
+            </Link>
+            <Link href="/exclude-rules">
+              <Button variant="outline" size="sm" className="gap-2">
+                <Shield className="h-4 w-4" />
+                <span className="hidden sm:inline">排除规则</span>
               </Button>
             </Link>
             <StatsPanel />

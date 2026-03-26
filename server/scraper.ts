@@ -47,6 +47,20 @@ const KEYWORD_PHRASES = [
   "cross-border",                           // cross-border regulatory topics
   "mutual recognition",                     // regulatory mutual recognition
   "memorandum of understanding",            // MoU between regulators
+  // ── Exchange partnership / collaboration themes ──
+  "partnership with",                       // exchange partnership announcements
+  "partners with",                          // exchange partnership announcements
+  "partnering with",                        // exchange partnership announcements
+  "collaborate",                            // exchange collaboration
+  "collaboration with",                     // exchange collaboration
+  "joint venture",                          // exchange joint ventures
+  "strategic alliance",                     // exchange strategic alliances
+  "listing agreement",                      // cross-listing agreements
+  "dual listing",                           // dual listing arrangements
+  "global listing",                         // global listing boards/programs
+  "connect program",                        // market connect programs (e.g. Stock Connect)
+  "market linkage",                         // market linkage arrangements
+  "interoperability",                       // exchange interoperability
   // ── Important exchanges (full names) ──
   "Bursa Malaysia",                          // Malaysian exchange
   "Warsaw Stock Exchange",                    // Polish exchange
@@ -67,10 +81,8 @@ const EXCLUDE_PATTERNS = [
   /\bannual report\b/i, /\bdividend\b/i,
   /\bshare buyback\b/i, /\bshare repurchase\b/i, /\bstock purchase\b/i,
   /\bacquisition of shares\b/i, /\bequity purchase\b/i,
-  // ── Commissioner (individual commissioner speeches excluded, but SEC Chair preserved below) ──
-  /\bcommissioner\b/i,
-  // ── Keynote (general keynotes excluded, but SEC Chair speeches preserved below) ──
-  /\bkeynote\b/i,
+  // ── Commissioner and Keynote: no longer excluded ──
+  // (Removed: commissioner and keynote speeches are now included)
   // ── Individual listed company news (not exchange/regulator level) ──
   /\bIPO\b/,
   /\blists? on\b/i,                         // "XYZ lists on Nasdaq"
@@ -81,14 +93,6 @@ const EXCLUDE_PATTERNS = [
   /\bbell ceremony\b/i,                      // listing ceremony
   /\bopening bell\b/i,                       // listing ceremony
   /\bclosing bell\b/i,                       // listing ceremony
-  /\bprime standard\b/i,                     // Frankfurt Prime Standard listing
-  /\bgeneral standard\b/i,                   // Frankfurt General Standard listing
-  /\bnew in the\b.*\bstandard\b/i,            // "New In The Prime/General Standard"
-  /\bwelcomes?\b.*\bto\b.*\b(?:trading|listing|market|board|exchange)\b/i, // "Exchange welcomes XYZ to trading"
-  /\bjoins?\b.*\b(?:exchange|market|segment)\b/i, // "XYZ joins the exchange"
-  /\bmoves? to\b.*\b(?:main|prime|standard)\b/i,  // "XYZ moves to main board"
-  /\btransfers? to\b.*\b(?:main|prime|standard)\b/i, // "XYZ transfers to..."
-  /\blisted on\b/i,                           // "XYZ listed on exchange"
   // ── Low-value periodic content ──
   /\bweekly report\b/i,                      // exchange weekly reports
   /\bweekly summary\b/i,                     // exchange weekly summaries
@@ -117,6 +121,15 @@ const WHITELIST_PATTERNS = [
   /\bSEC\s+Chair/i,                          // SEC Chairman/Chairwoman speeches
   /\bregulat(?:ory)?\s+(?:reform|framework|cooperation|forum)/i, // specific regulatory topics
   /\breform\b/i,                             // reform topics override exclusions
+  // ── Exchange partnership / collaboration whitelist ──
+  /\bpartner(?:s|ed|ing|ship)?\b/i,          // partnership-related titles
+  /\bcollaborat(?:e|es|ed|ing|ion)\b/i,      // collaboration-related titles
+  /\bjoint\s+venture\b/i,                    // joint venture announcements
+  /\bstrategic\s+alliance\b/i,               // strategic alliance announcements
+  /\bglobal\s+listing\b/i,                   // global listing board/program
+  /\bdual\s+listing\b/i,                     // dual listing arrangements
+  /\bmarket\s+link(?:age)?\b/i,              // market linkage arrangements
+  /\binteroperabilit\w+\b/i,                 // interoperability topics
 ];
 
 const BASE_URL = "https://mondovisione.com/media-and-resources/news/";
@@ -255,6 +268,19 @@ function phraseToLabel(phrase: string): string {
     "capital framework": "Policy",
     "stock exchange cooperation": "Cooperation",
     "stock exchange collaboration": "Cooperation",
+    "partnership with": "Partnership",
+    "partners with": "Partnership",
+    "partnering with": "Partnership",
+    "collaborate": "Collaboration",
+    "collaboration with": "Collaboration",
+    "joint venture": "Partnership",
+    "strategic alliance": "Partnership",
+    "listing agreement": "Cooperation",
+    "dual listing": "Cooperation",
+    "global listing": "Cooperation",
+    "connect program": "Cooperation",
+    "market linkage": "Cooperation",
+    "interoperability": "Cooperation",
     "exchange cooperation": "Cooperation",
     "exchange collaboration": "Cooperation",
     "cross-border": "Cross-border",
@@ -269,8 +295,60 @@ function phraseToLabel(phrase: string): string {
   return map[phrase] || phrase;
 }
 
+// ─── List of exchange/regulator names for multi-entity detection ──────────────
+const EXCHANGE_NAMES = [
+  // Short-form (word-boundary matched)
+  "NASDAQ", "NYSE", "LSEG", "JPX", "SGX", "HKEX", "SEHK", "KRX", "ADX",
+  "EURONEXT", "SIX", "DFM", "LME", "Eurex", "EEX", "ATHEX", "TMX",
+  // Long-form (substring matched)
+  "Nasdaq", "New York Stock Exchange", "London Stock Exchange",
+  "Hong Kong Exchanges", "Singapore Exchange", "Japan Exchange",
+  "Deutsche Boerse", "Deutsche Börse", "Euronext", "Bursa Malaysia",
+  "Warsaw Stock Exchange", "Taiwan Futures Exchange", "Saudi Exchange",
+  "Cboe", "CME Group", "ICE", "Intercontinental Exchange",
+  "Australian Securities Exchange", "ASX",
+  "Toronto Stock Exchange", "TSX",
+  "Borsa Istanbul", "Johannesburg Stock Exchange", "JSE",
+  "National Stock Exchange", "NSE", "BSE",
+];
+
+// Check if title contains two or more distinct exchange/regulator names
+function hasTwoOrMoreExchanges(title: string): boolean {
+  const titleUpper = title.toUpperCase();
+  const matchedPositions = new Set<number>(); // track character positions to avoid double-counting
+
+  for (const name of EXCHANGE_NAMES) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, "gi");
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(title)) !== null) {
+      // Use start position to represent this match; skip if already covered
+      const pos = m.index;
+      if (!matchedPositions.has(pos)) {
+        matchedPositions.add(pos);
+      }
+    }
+  }
+
+  // Count distinct non-overlapping matches by grouping close positions
+  // Sort positions and count groups that are at least 3 chars apart
+  const positions = Array.from(matchedPositions).sort((a, b) => a - b);
+  let distinctCount = 0;
+  let lastEnd = -10;
+  for (const pos of positions) {
+    if (pos > lastEnd + 2) {
+      distinctCount++;
+      lastEnd = pos;
+    }
+  }
+
+  return distinctCount >= 2;
+}
+
 // ─── Check if article is relevant ──────────────────────────
-export function isRelevantArticle(title: string, summary: string): boolean {
+// dbExcludePatterns: if provided (from database), these REPLACE the built-in EXCLUDE_PATTERNS
+// Each string is a plain-text pattern that will be matched case-insensitively with word boundary
+export function isRelevantArticle(title: string, summary: string, dbExcludePatterns?: string[]): boolean {
   const combined = `${title} ${summary}`;
 
   // Hard-exclude patterns that should NEVER be overridden by whitelist
@@ -279,20 +357,31 @@ export function isRelevantArticle(title: string, summary: string): boolean {
     if (pattern.test(combined)) return false;
   }
 
+  // If title contains two or more exchange/regulator names, it's likely a cooperation story
+  if (hasTwoOrMoreExchanges(title)) return true;
+
   // Check whitelist on TITLE ONLY (not summary) to avoid false positives
   for (const wp of WHITELIST_PATTERNS) {
     if (wp.test(title)) return true;
   }
 
-  // Then check exclude patterns on combined text
-  for (const pattern of EXCLUDE_PATTERNS) {
-    if (pattern.test(combined)) return false;
+  // Use database exclude patterns if provided, otherwise fall back to built-in
+  if (dbExcludePatterns && dbExcludePatterns.length > 0) {
+    const combinedLower = combined.toLowerCase();
+    for (const pat of dbExcludePatterns) {
+      if (combinedLower.includes(pat.toLowerCase())) return false;
+    }
+  } else {
+    // Fall back to built-in regex patterns
+    for (const pattern of EXCLUDE_PATTERNS) {
+      if (pattern.test(combined)) return false;
+    }
   }
   return true;
 }
 
 // ─── Scrape a single page ──────────────────────────────────
-async function scrapePage(page: number, keywordList?: string[]): Promise<ScrapedArticle[]> {
+async function scrapePage(page: number, keywordList?: string[], dbExcludePatterns?: string[]): Promise<ScrapedArticle[]> {
   const url = page === 1 ? BASE_URL : `${BASE_URL}?page=${page}`;
 
   const response = await fetchWithRetry(url);
@@ -357,7 +446,7 @@ async function scrapePage(page: number, keywordList?: string[]): Promise<Scraped
     if (matched.length === 0) return;
 
     // Check relevance
-    if (!isRelevantArticle(title, summary)) return;
+    if (!isRelevantArticle(title, summary, dbExcludePatterns)) return;
 
     const titleDisplay = title.length > 50 ? title.substring(0, 47) + "..." : title;
 
@@ -379,7 +468,8 @@ export async function scrapeNews(
   startDate?: string,
   endDate?: string,
   maxPages = 10,
-  keywordList?: string[]
+  keywordList?: string[],
+  dbExcludePatterns?: string[]
 ): Promise<{ articles: ScrapedArticle[]; totalScanned: number }> {
   const articles: ScrapedArticle[] = [];
   let totalScanned = 0;
@@ -390,7 +480,7 @@ export async function scrapeNews(
 
   for (let page = 1; page <= maxPages; page++) {
     try {
-      const pageArticles = await scrapePage(page, keywordList);
+      const pageArticles = await scrapePage(page, keywordList, dbExcludePatterns);
       totalScanned += pageArticles.length;
       consecutiveErrors = 0; // Reset on success
 
