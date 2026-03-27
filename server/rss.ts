@@ -7,62 +7,65 @@ export interface RssArticle {
   description: string;
   url: string;
   publishDate: string; // YYYY-MM-DD
-  source: "ft" | "economist";
+  source: "ft" | "economist" | "bloomberg";
   sourceLabel: string;
   matchedTopics: string[];
   matchedKeywords: string[];
 }
 
-// ─── Default keywords: ~10 per topic ───────────────────────
+// ─── Default keywords: updated based on actual FT/Economist/Bloomberg coverage ──
 // These are the built-in defaults; users can add/remove via the UI.
 export const DEFAULT_RSS_KEYWORDS: Record<string, string[]> = {
   stock_exchange: [
-    "stock exchange",
-    "securities exchange",
-    "capital markets",
-    "exchange regulation",
-    "market infrastructure",
-    "trading venue",
-    "exchange listing",
-    "clearing house",
-    "market microstructure",
-    "exchange merger",
+    "bond market",
+    "stock market",
+    "Wall Street",
+    "asset class",
+    "hedge fund",
+    "IPO",
+    "sovereign",
+    "private credit",
+    "Treasury",
+    "financial market",
   ],
   capital_market_risk: [
-    "market risk",
-    "systemic risk",
-    "financial stability",
-    "market volatility",
-    "liquidity risk",
-    "credit risk",
-    "financial regulation",
-    "stress test",
-    "capital requirement",
-    "market surveillance",
+    "energy shock",
+    "inflation",
+    "recession",
+    "Fed",
+    "ECB",
+    "CRISIS",
+    "sell-off",
+    "volatility",
+    "market crash",
+    "OECD",
+    "WFE",
+    "IOSCO",
+    "IMF",
   ],
   green_finance: [
-    "green finance",
-    "sustainable finance",
+    "green policy",
+    "green investment",
     "ESG",
-    "green bond",
-    "carbon market",
-    "climate risk",
+    "climate",
+    "renewable energy",
+    "carbon",
     "net zero",
-    "sustainable investment",
-    "climate disclosure",
-    "transition finance",
+    "clean energy",
+    "fossil fuel",
+    "energy transition",
   ],
   ai_securities: [
     "artificial intelligence",
+    "AI",
+    "stablecoin",
     "algorithmic trading",
-    "AI regulation",
-    "machine learning",
-    "fintech",
-    "robo-advisor",
-    "AI in finance",
     "high-frequency trading",
-    "digital asset",
-    "AI governance",
+    "tokenisation",
+    "fintech",
+    "digital currency",
+    "blockchain",
+    "machine learning",
   ],
 };
 
@@ -104,6 +107,12 @@ const RSS_FEEDS = [
     url: "https://www.economist.com/science-and-technology/rss.xml",
     source: "economist" as const,
     sourceLabel: "The Economist - Science & Technology",
+    requiresUserAgent: false,
+  },
+  {
+    url: "https://feeds.bloomberg.com/markets/news.rss",
+    source: "bloomberg" as const,
+    sourceLabel: "Bloomberg - Markets",
     requiresUserAgent: false,
   },
 ];

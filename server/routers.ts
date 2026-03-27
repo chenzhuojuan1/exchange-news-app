@@ -84,7 +84,7 @@ function getYesterdayRange(): { start: string; end: string } {
   return { start: fmt(startDate), end: fmt(endDate) };
 }
 
-// ─── Helper: send email via SMTP ───────────────────────────
+//// ─── Helper: send email via SMTP ───────────────────────
 async function sendNewsEmail(
   articles: Array<{
     title: string;
@@ -93,11 +93,20 @@ async function sendNewsEmail(
     url: string;
     matchedKeywords: string;
   }>,
-  dateRange: { start: string; end: string }
+  dateRange: { start: string; end: string },
+  rssArticles?: Array<{
+    title: string;
+    description: string;
+    url: string;
+    publishDate: string;
+    sourceLabel: string;
+    matchedTopics: string[];
+    matchedKeywords: string[];
+  }>
 ): Promise<{ success: boolean; message: string; emailHtml: string; previewOnly?: boolean }> {
-  const emailHtml = generateEmailHtml(articles, dateRange);
+  const emailHtml = generateEmailHtml(articles, dateRange, rssArticles);
 
-  if (articles.length === 0) {
+  if (articles.length === 0 && (!rssArticles || rssArticles.length === 0)) {
     return { success: false, message: "该日期范围内无新闻数据", emailHtml };
   }
 
@@ -139,10 +148,11 @@ async function sendNewsEmail(
       socketTimeout: 15000,
     });
 
+    const totalCount = articles.length + (rssArticles?.length || 0);
     await transporter.sendMail({
       from: smtpUser,
       to: emailTo,
-      subject: `境外交易所新闻汇总 (${dateRange.start} ~ ${dateRange.end})`,
+      subject: `境外交易所新闻汇总 (${dateRange.start} ~ ${dateRange.end}) 共${totalCount}条`,
       html: emailHtml,
     });
 
@@ -275,10 +285,24 @@ async function startupAutoScrape() {
     const result = await performScrape(range.start, range.end, 15);
     console.log(`[Startup] Auto-scrape completed: ${result.message}`);
 
-    // Auto send email after startup scrape
+    // Auto send email after startup scrape (include RSS articles)
     if (result.articlesInserted > 0) {
       try {
         const articles = await getNewsByDateRange(range.start, range.end);
+        // Fetch RSS articles for the combined email
+        let rssArticles: any[] = [];
+        try {
+          let customKeywords: Record<string, string[]> | undefined;
+          try {
+            const dbMap = await getActiveRssKeywordMap();
+            if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
+          } catch { customKeywords = undefined; }
+          const rssResult = await fetchRssNews(undefined, 2, customKeywords);
+          rssArticles = rssResult.articles;
+          console.log(`[Startup] RSS articles fetched: ${rssArticles.length}`);
+        } catch (rssErr) {
+          console.error("[Startup] RSS fetch failed:", rssErr);
+        }
         const emailResult = await sendNewsEmail(
           articles.map((a) => ({
             title: a.title,
@@ -287,7 +311,8 @@ async function startupAutoScrape() {
             url: a.url,
             matchedKeywords: a.matchedKeywords,
           })),
-          range
+          range,
+          rssArticles
         );
         console.log(`[Startup] Email: ${emailResult.message}`);
       } catch (emailErr) {
@@ -348,9 +373,23 @@ function startDailyCron() {
         const result = await performScrape(range.start, range.end, 15);
         console.log(`[CRON] Scrape completed: ${result.message}`);
 
-        // Auto send email after scrape
+        // Auto send email after scrape (include RSS articles)
         if (result.articlesInserted > 0) {
           const articles = await getNewsByDateRange(range.start, range.end);
+          // Fetch RSS articles for the combined email
+          let rssArticles: any[] = [];
+          try {
+            let customKeywords: Record<string, string[]> | undefined;
+            try {
+              const dbMap = await getActiveRssKeywordMap();
+              if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
+            } catch { customKeywords = undefined; }
+            const rssResult = await fetchRssNews(undefined, 2, customKeywords);
+            rssArticles = rssResult.articles;
+            console.log(`[CRON] RSS articles fetched: ${rssArticles.length}`);
+          } catch (rssErr) {
+            console.error("[CRON] RSS fetch failed:", rssErr);
+          }
           const emailResult = await sendNewsEmail(
             articles.map((a) => ({
               title: a.title,
@@ -359,7 +398,8 @@ function startDailyCron() {
               url: a.url,
               matchedKeywords: a.matchedKeywords,
             })),
-            range
+            range,
+            rssArticles
           );
           console.log(`[CRON] Email: ${emailResult.message}`);
         }
@@ -469,7 +509,7 @@ export const appRouter = router({
         return performScrape(input?.startDate, input?.endDate, input?.maxPages ?? 10, true);
       }),
 
-    // Send email with news
+    // Send email with news (Monovision + RSS combined)
     sendEmail: publicProcedure
       .input(
         z.object({
@@ -479,6 +519,19 @@ export const appRouter = router({
       )
       .mutation(async ({ input }) => {
         const articles = await getNewsByDateRange(input.startDate, input.endDate);
+        // Fetch RSS articles for the combined email
+        let rssArticles: any[] = [];
+        try {
+          let customKeywords: Record<string, string[]> | undefined;
+          try {
+            const dbMap = await getActiveRssKeywordMap();
+            if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
+          } catch { customKeywords = undefined; }
+          const rssResult = await fetchRssNews(undefined, 2, customKeywords);
+          rssArticles = rssResult.articles;
+        } catch (rssErr) {
+          console.error("[sendEmail] RSS fetch failed:", rssErr);
+        }
         return sendNewsEmail(
           articles.map((a) => ({
             title: a.title,
@@ -487,11 +540,12 @@ export const appRouter = router({
             url: a.url,
             matchedKeywords: a.matchedKeywords,
           })),
-          { start: input.startDate, end: input.endDate }
+          { start: input.startDate, end: input.endDate },
+          rssArticles
         );
       }),
 
-    // Get email preview HTML
+    // Get email preview HTML (Monovision + RSS combined)
     emailPreview: publicProcedure
       .input(
         z.object({
@@ -501,6 +555,19 @@ export const appRouter = router({
       )
       .query(async ({ input }) => {
         const articles = await getNewsByDateRange(input.startDate, input.endDate);
+        // Fetch RSS articles for the combined preview
+        let rssArticles: any[] = [];
+        try {
+          let customKeywords: Record<string, string[]> | undefined;
+          try {
+            const dbMap = await getActiveRssKeywordMap();
+            if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
+          } catch { customKeywords = undefined; }
+          const rssResult = await fetchRssNews(undefined, 2, customKeywords);
+          rssArticles = rssResult.articles;
+        } catch (rssErr) {
+          console.error("[emailPreview] RSS fetch failed:", rssErr);
+        }
         const emailHtml = generateEmailHtml(
           articles.map((a) => ({
             title: a.title,
@@ -509,9 +576,10 @@ export const appRouter = router({
             url: a.url,
             matchedKeywords: a.matchedKeywords,
           })),
-          { start: input.startDate, end: input.endDate }
+          { start: input.startDate, end: input.endDate },
+          rssArticles
         );
-        return { html: emailHtml, articleCount: articles.length };
+        return { html: emailHtml, articleCount: articles.length + rssArticles.length };
       }),
   }),
 

@@ -64,8 +64,9 @@ const TOPIC_CONFIG: Record<
 };
 
 const SOURCE_CONFIG: Record<string, { color: string; bg: string; accent: string }> = {
-  ft:        { color: "text-pink-700",  bg: "bg-pink-50",  accent: "bg-pink-500" },
-  economist: { color: "text-red-700",   bg: "bg-red-50",   accent: "bg-red-500" },
+  ft:        { color: "text-pink-700",   bg: "bg-pink-50",   accent: "bg-pink-500" },
+  economist: { color: "text-red-700",    bg: "bg-red-50",    accent: "bg-red-500" },
+  bloomberg: { color: "text-orange-700", bg: "bg-orange-50", accent: "bg-orange-500" },
 };
 
 // ─── Keyword Management Panel ───────────────────────────────
@@ -379,6 +380,10 @@ export default function RssSearch() {
     () => rssQuery.data?.articles.filter((a) => a.source === "economist") || [],
     [rssQuery.data]
   );
+  const bloombergArticles = useMemo(
+    () => rssQuery.data?.articles.filter((a) => a.source === "bloomberg") || [],
+    [rssQuery.data]
+  );
   const totalCount = rssQuery.data?.articles.length || 0;
 
   const topics = topicsQuery.data || [
@@ -404,8 +409,8 @@ export default function RssSearch() {
               <Rss className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight">FT & Economist 新闻搜索</h1>
-              <p className="text-xs text-muted-foreground hidden sm:block">Financial Times · The Economist RSS</p>
+              <h1 className="text-lg font-bold tracking-tight">FT / Economist / Bloomberg 新闻搜索</h1>
+              <p className="text-xs text-muted-foreground hidden sm:block">Financial Times · The Economist · Bloomberg Markets RSS</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -448,8 +453,8 @@ export default function RssSearch() {
                 RSS 搜索关键词管理
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
-                每个主题预设约 10 个内置关键词，您可以启用/禁用内置关键词，或添加自定义关键词。
-                搜索时将使用所有已启用的关键词匹配 FT 和 Economist 的文章标题与摘要。
+                每个主题预设若干内置关键词，您可以启用/禁用内置关键词，或添加自定义关键词。
+                搜索时将使用所有已启用的关键词匹配 FT、Economist 和 Bloomberg Markets 的文章标题与摘要。
               </p>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -622,6 +627,25 @@ export default function RssSearch() {
                     </div>
                   </section>
                 )}
+
+                {bloombergArticles.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="h-5 w-1 rounded-full bg-orange-500" />
+                      <h3 className="font-semibold text-sm">
+                        Bloomberg Markets
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">
+                          ({bloombergArticles.length} 条)
+                        </span>
+                      </h3>
+                    </div>
+                    <div className="space-y-3">
+                      {bloombergArticles.map((article, i) => (
+                        <RssArticleCard key={`bbg-${i}`} {...article} topicLabels={topicLabels} />
+                      ))}
+                    </div>
+                  </section>
+                )}
               </div>
             )}
           </>
@@ -633,10 +657,10 @@ export default function RssSearch() {
             <CardContent className="py-12 text-center">
               <Rss className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
               <p className="font-medium text-muted-foreground">
-                从 Financial Times 和 The Economist 搜索相关新闻
+                从 Financial Times、The Economist 和 Bloomberg Markets 搜索相关新闻
               </p>
               <p className="text-sm text-muted-foreground/70 mt-2 max-w-sm mx-auto">
-                选择感兴趣的主题，点击"搜索新闻"获取最新资讯；点击右上角"关键词管理"可自定义搜索关键词
+                选择感兴趣的主题，点击“搜索新闻”获取最新资讯；点击右上角“关键词管理”可自定义搜索关键词
               </p>
               <div className="flex flex-wrap justify-center gap-2 mt-4">
                 {[

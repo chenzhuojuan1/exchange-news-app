@@ -709,13 +709,23 @@ export function generateEmailHtml(
     url: string;
     matchedKeywords: string;
   }>,
-  dateRange?: { start: string; end: string }
+  dateRange?: { start: string; end: string },
+  rssArticles?: Array<{
+    title: string;
+    description: string;
+    url: string;
+    publishDate: string;
+    sourceLabel: string;
+    matchedTopics: string[];
+    matchedKeywords: string[];
+  }>
 ): string {
   const dateLabel = dateRange
     ? `${dateRange.start} 至 ${dateRange.end}`
     : "最新";
 
-  const rows = articles
+  // ─── Monovision 部分 ───
+  const monoRows = articles
     .map(
       (a) => `
     <tr style="border-bottom:1px solid #eee;">
@@ -735,13 +745,57 @@ export function generateEmailHtml(
     )
     .join("");
 
+  // ─── RSS 部分 ───
+  const rssRows = (rssArticles || [])
+    .map(
+      (a) => `
+    <tr style="border-bottom:1px solid #eee;">
+      <td style="padding:12px 8px;">
+        <a href="${a.url}" style="color:#1a56db;text-decoration:none;font-weight:600;">${a.title}</a>
+        <br/>
+        <span style="color:#888;font-size:12px;">${a.description ? a.description.slice(0, 120) + (a.description.length > 120 ? '...' : '') : ''}</span>
+      </td>
+      <td style="padding:12px 8px;white-space:nowrap;color:#666;font-size:13px;">${a.publishDate}</td>
+      <td style="padding:12px 8px;">
+        <span style="background:#f0fdf4;color:#16a34a;padding:2px 8px;border-radius:12px;font-size:11px;margin-right:4px;">${a.sourceLabel}</span>
+        ${a.matchedKeywords
+          .slice(0, 4)
+          .map((k) => `<span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:12px;font-size:12px;margin-right:4px;">${k}</span>`)
+          .join("")}
+      </td>
+    </tr>`
+    )
+    .join("");
+
+  const rssSection = rssArticles && rssArticles.length > 0 ? `
+  <h2 style="color:#1e3a5f;border-bottom:2px solid #16a34a;padding-bottom:8px;margin-top:36px;">
+    📰 FT / Economist / Bloomberg RSS 新闻
+    <span style="font-size:14px;font-weight:normal;color:#666;margin-left:8px;">共 ${rssArticles.length} 条</span>
+  </h2>
+  <table style="width:100%;border-collapse:collapse;">
+    <thead>
+      <tr style="background:#f0fdf4;">
+        <th style="padding:10px 8px;text-align:left;">标题 / 摘要</th>
+        <th style="padding:10px 8px;text-align:left;">日期</th>
+        <th style="padding:10px 8px;text-align:left;">来源 / 关键词</th>
+      </tr>
+    </thead>
+    <tbody>${rssRows}</tbody>
+  </table>` : '';
+
   return `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"/></head>
 <body style="font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;">
   <h1 style="color:#1e3a5f;border-bottom:3px solid #1a56db;padding-bottom:12px;">境外交易所新闻汇总</h1>
-  <p style="color:#666;">日期范围：${dateLabel} | 共 ${articles.length} 条新闻</p>
+  <p style="color:#666;">日期范围：${dateLabel} | Mondovisione: ${articles.length} 条${rssArticles && rssArticles.length > 0 ? ` | RSS: ${rssArticles.length} 条` : ''}</p>
+
+  <h2 style="color:#1e3a5f;border-bottom:2px solid #1a56db;padding-bottom:8px;">
+    🌐 Mondovisione 交易所新闻
+    <span style="font-size:14px;font-weight:normal;color:#666;margin-left:8px;">共 ${articles.length} 条</span>
+  </h2>
+  ${articles.length > 0 ? `
   <table style="width:100%;border-collapse:collapse;">
     <thead>
       <tr style="background:#f8fafc;">
@@ -750,10 +804,14 @@ export function generateEmailHtml(
         <th style="padding:10px 8px;text-align:left;">关键词</th>
       </tr>
     </thead>
-    <tbody>${rows}</tbody>
-  </table>
-  <p style="color:#999;font-size:12px;margin-top:20px;">
-    数据来源：<a href="https://mondovisione.com/media-and-resources/news/">Mondo Visione News Centre</a>
+    <tbody>${monoRows}</tbody>
+  </table>` : '<p style="color:#999;font-size:13px;">该日期范围内暂无 Mondovisione 新闻</p>'}
+
+  ${rssSection}
+
+  <p style="color:#999;font-size:12px;margin-top:28px;border-top:1px solid #eee;padding-top:12px;">
+    Mondovisione: <a href="https://mondovisione.com/media-and-resources/news/">Mondo Visione News Centre</a>
+    &nbsp;|&nbsp; RSS: Financial Times · The Economist · Bloomberg Markets
   </p>
 </body>
 </html>`;
