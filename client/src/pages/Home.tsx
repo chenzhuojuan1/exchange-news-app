@@ -24,6 +24,7 @@ import {
   History,
   Shield,
   Rss,
+  ExternalLink,
 } from "lucide-react";
 import { Link } from "wouter";
 import { useState, useMemo, useRef, useCallback } from "react";
@@ -37,6 +38,17 @@ type ArticleItem = {
   publishDate: string;
   url: string;
   matchedKeywords: string;
+};
+
+type RssArticleItem = {
+  title: string;
+  titleChinese?: string;
+  description: string;
+  url: string;
+  publishDate: string;
+  sourceLabel: string;
+  matchedTopics: string[];
+  matchedKeywords: string[];
 };
 
 export default function Home() {
@@ -217,6 +229,19 @@ export default function Home() {
   const totalPages = allNews.data ? Math.ceil(allNews.data.total / 20) : 0;
   const selectedArray = useMemo(() => Array.from(selectedIds), [selectedIds]);
 
+  // Compute total article counts (Monovision + RSS) for email dialog
+  const yesterdayTotalCount = useMemo(() => {
+    const mono = yesterday.data?.articles?.length || 0;
+    const rss = (yesterday.data as any)?.rssArticles?.length || 0;
+    return mono + rss;
+  }, [yesterday.data]);
+
+  const dateRangeTotalCount = useMemo(() => {
+    const mono = dateRange.data?.articles?.length || 0;
+    const rss = (dateRange.data as any)?.rssArticles?.length || 0;
+    return mono + rss;
+  }, [dateRange.data]);
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -363,13 +388,16 @@ export default function Home() {
                   </Button>
                 )}
                 <span className="text-sm text-muted-foreground">
-                  {yesterday.data?.articles.length || 0} 条
+                  Monovision: {yesterday.data?.articles.length || 0} 条
+                  {((yesterday.data as any)?.rssArticles?.length || 0) > 0 && (
+                    <> | RSS: {(yesterday.data as any)?.rssArticles?.length} 条</>
+                  )}
                 </span>
                 {yesterday.data?.dateRange && (
                   <EmailDialog
                     startDate={yesterday.data.dateRange.start}
                     endDate={yesterday.data.dateRange.end}
-                    articleCount={yesterday.data?.articles.length || 0}
+                    articleCount={yesterdayTotalCount}
                   />
                 )}
               </div>
@@ -383,6 +411,11 @@ export default function Home() {
               onSelectChange={handleSelectChange}
               favoriteIdSet={favoriteIdSet}
               onToggleFavorite={handleToggleFavorite}
+            />
+            {/* RSS Section */}
+            <RssSection
+              rssArticles={(yesterday.data as any)?.rssArticles}
+              isLoading={yesterday.isLoading}
             />
           </TabsContent>
 
@@ -466,7 +499,7 @@ export default function Home() {
                       <EmailDialog
                         startDate={searchStartDate}
                         endDate={searchEndDate}
-                        articleCount={dateRange.data?.articles.length || 0}
+                        articleCount={dateRangeTotalCount}
                       />
                     )}
                   </div>
@@ -502,7 +535,10 @@ export default function Home() {
                         </Button>
                       )}
                     <span className="text-sm text-muted-foreground">
-                      {dateRange.data?.articles.length || 0} 条
+                      Monovision: {dateRange.data?.articles.length || 0} 条
+                      {((dateRange.data as any)?.rssArticles?.length || 0) > 0 && (
+                        <> | RSS: {(dateRange.data as any)?.rssArticles?.length} 条</>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -515,6 +551,11 @@ export default function Home() {
                   onSelectChange={handleSelectChange}
                   favoriteIdSet={favoriteIdSet}
                   onToggleFavorite={handleToggleFavorite}
+                />
+                {/* RSS Section */}
+                <RssSection
+                  rssArticles={(dateRange.data as any)?.rssArticles}
+                  isLoading={dateRange.isLoading}
                 />
               </>
             ) : (
@@ -625,12 +666,93 @@ export default function Home() {
             >
               Mondo Visione News Centre
             </a>
+            {" | "}
+            <span>Financial Times / The Economist / Bloomberg RSS</span>
           </p>
           <p className="mt-1">
             每工作日 08:30 自动更新 | 仅筛选交易所相关实质性新闻
           </p>
         </div>
       </footer>
+    </div>
+  );
+}
+
+// ─── RSS Section Sub-component ──────────────────────────────
+function RssSection({
+  rssArticles,
+  isLoading,
+}: {
+  rssArticles: RssArticleItem[] | undefined;
+  isLoading: boolean;
+}) {
+  if (isLoading || !rssArticles || rssArticles.length === 0) return null;
+
+  return (
+    <div className="mt-6">
+      <div className="flex items-center gap-2 mb-3">
+        <Rss className="h-4 w-4 text-green-600" />
+        <h3 className="text-sm font-semibold text-foreground">
+          FT / Economist / Bloomberg RSS 新闻
+        </h3>
+        <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+          {rssArticles.length} 条
+        </span>
+      </div>
+      <div className="space-y-2">
+        {rssArticles.map((article, idx) => (
+          <Card key={`rss-${idx}-${article.url}`} className="overflow-hidden">
+            <CardContent className="p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <a
+                    href={article.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-primary hover:underline leading-snug block"
+                  >
+                    {article.title}
+                  </a>
+                  {article.titleChinese && (
+                    <p className="text-sm text-muted-foreground mt-0.5 leading-snug">
+                      {article.titleChinese}
+                    </p>
+                  )}
+                  {article.description && (
+                    <p className="text-xs text-muted-foreground/70 mt-1 line-clamp-2">
+                      {article.description}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <span className="text-xs text-muted-foreground">
+                      {article.publishDate}
+                    </span>
+                    <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded-full font-medium">
+                      {article.sourceLabel}
+                    </span>
+                    {article.matchedKeywords.slice(0, 3).map((kw) => (
+                      <span
+                        key={kw}
+                        className="text-[10px] bg-yellow-50 text-yellow-800 px-1.5 py-0.5 rounded-full"
+                      >
+                        {kw}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <a
+                  href={article.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 text-muted-foreground hover:text-primary"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </a>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }

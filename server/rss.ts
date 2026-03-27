@@ -2,8 +2,11 @@
 // Fetches and filters news from Financial Times and The Economist RSS feeds
 // Four topics: stock exchanges, capital market risks, green finance, AI in securities
 
+import { invokeLLM } from "./_core/llm";
+
 export interface RssArticle {
   title: string;
+  titleChinese?: string; // Chinese translation of the title
   description: string;
   url: string;
   publishDate: string; // YYYY-MM-DD
@@ -201,7 +204,8 @@ function matchTopics(
 export async function fetchRssNews(
   selectedTopics?: string[],
   maxAgeDays = 30,
-  customKeywords?: Record<string, string[]>
+  customKeywords?: Record<string, string[]>,
+  dateRange?: { start: string; end: string }
 ): Promise<{
   articles: RssArticle[];
   errors: string[];
@@ -209,8 +213,18 @@ export async function fetchRssNews(
 }> {
   const errors: string[] = [];
   const allArticles: RssArticle[] = [];
+  // Use precise date range if provided, otherwise fall back to maxAgeDays
+  let startDateStr: string | null = null;
+  let endDateStr: string | null = null;
   const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+  if (dateRange) {
+    startDateStr = dateRange.start;
+    endDateStr = dateRange.end;
+    // Set cutoff to start of the date range
+    cutoffDate.setTime(new Date(dateRange.start + "T00:00:00Z").getTime());
+  } else {
+    cutoffDate.setDate(cutoffDate.getDate() - maxAgeDays);
+  }
 
   // Merge default + custom keywords per topic
   const topicKeywords: Record<string, string[]> = {};
@@ -250,6 +264,9 @@ export async function fetchRssNews(
     for (const item of items) {
       const pubDate = formatPubDate(item.pubDate);
       if (new Date(pubDate) < cutoffDate) continue;
+      // If precise date range is provided, also check upper bound
+      if (endDateStr && pubDate > endDateStr) continue;
+      if (startDateStr && pubDate < startDateStr) continue;
       const { topics, keywords } = matchTopics(item.title, item.description, activeTopicKeywords);
       if (topics.length === 0) continue;
       allArticles.push({
@@ -277,4 +294,59 @@ export async function fetchRssNews(
   deduplicated.sort((a, b) => b.publishDate.localeCompare(a.publishDate));
 
   return { articles: deduplicated, errors, fetchedAt: new Date().toISOString() };
+}
+
+// ─── Translate RSS article titles to Chinese ──────────────
+export async function translateRssArticles(
+  articles: RssArticle[]
+): Promise<RssArticle[]> {
+  if (articles.length === 0) return articles;
+
+  const batchSize = 10;
+  const translated = [...articles];
+
+  for (let i = 0; i < translated.length; i += batchSize) {
+    const batch = translated.slice(i, i + batchSize);
+    const numberedList = batch.map((a, idx) => `${idx + 1}. ${a.title}`).join("\n");
+
+    try {
+      const response = await invokeLLM({
+        messages: [
+          {
+            role: "system",
+            content:
+              "你是一个专业的金融新闻翻译助手。请将以下英文新闻标题翻译成简洁准确的中文。每行一个翻译，保持编号格式。只输出翻译结果，不要添加任何解释。",
+          },
+          {
+            role: "user",
+            content: numberedList,
+          },
+        ],
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (typeof content === "string") {
+        const lines = content.trim().split("\n");
+        for (const line of lines) {
+          const match = line.match(/^(\d+)\.\s*(.+)/);
+          if (match) {
+            const idx = parseInt(match[1], 10) - 1;
+            if (idx >= 0 && idx < batch.length) {
+              translated[i + idx] = { ...translated[i + idx], titleChinese: match[2].trim() };
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[RSS] Translation error:", err);
+      // On failure, leave titleChinese undefined
+    }
+
+    // Small delay between batches
+    if (i + batchSize < translated.length) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  return translated;
 }

@@ -38,7 +38,7 @@ import {
 import nodemailer from "nodemailer";
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from "docx";
 import { ENV } from "./_core/env";
-import { fetchRssNews, RSS_TOPIC_META, DEFAULT_RSS_KEYWORDS } from "./rss";
+import { fetchRssNews, RSS_TOPIC_META, DEFAULT_RSS_KEYWORDS, translateRssArticles } from "./rss";
 import {
   getAllRssKeywords,
   getActiveRssKeywordMap,
@@ -96,6 +96,7 @@ async function sendNewsEmail(
   dateRange: { start: string; end: string },
   rssArticles?: Array<{
     title: string;
+    titleChinese?: string;
     description: string;
     url: string;
     publishDate: string;
@@ -297,9 +298,11 @@ async function startupAutoScrape() {
             const dbMap = await getActiveRssKeywordMap();
             if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
           } catch { customKeywords = undefined; }
-          const rssResult = await fetchRssNews(undefined, 2, customKeywords);
-          rssArticles = rssResult.articles;
-          console.log(`[Startup] RSS articles fetched: ${rssArticles.length}`);
+          const rssResult = await fetchRssNews(undefined, 30, customKeywords, range);
+          if (rssResult.articles.length > 0) {
+            rssArticles = await translateRssArticles(rssResult.articles);
+          }
+          console.log(`[Startup] RSS articles fetched: ${rssArticles.length} (range: ${range.start}~${range.end})`);
         } catch (rssErr) {
           console.error("[Startup] RSS fetch failed:", rssErr);
         }
@@ -384,9 +387,11 @@ function startDailyCron() {
               const dbMap = await getActiveRssKeywordMap();
               if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
             } catch { customKeywords = undefined; }
-            const rssResult = await fetchRssNews(undefined, 2, customKeywords);
-            rssArticles = rssResult.articles;
-            console.log(`[CRON] RSS articles fetched: ${rssArticles.length}`);
+            const rssResult = await fetchRssNews(undefined, 30, customKeywords, range);
+            if (rssResult.articles.length > 0) {
+              rssArticles = await translateRssArticles(rssResult.articles);
+            }
+            console.log(`[CRON] RSS articles fetched: ${rssArticles.length} (range: ${range.start}~${range.end})`);
           } catch (rssErr) {
             console.error("[CRON] RSS fetch failed:", rssErr);
           }
@@ -468,7 +473,23 @@ export const appRouter = router({
         }
       }
 
-      return { articles, dateRange: range };
+      // Fetch RSS articles for the same date range and translate
+      let rssArticles: any[] = [];
+      try {
+        let customKeywords: Record<string, string[]> | undefined;
+        try {
+          const dbMap = await getActiveRssKeywordMap();
+          if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
+        } catch { customKeywords = undefined; }
+        const rssResult = await fetchRssNews(undefined, 30, customKeywords, range);
+        if (rssResult.articles.length > 0) {
+          rssArticles = await translateRssArticles(rssResult.articles);
+        }
+      } catch (rssErr) {
+        console.error("[Yesterday] RSS fetch failed:", rssErr);
+      }
+
+      return { articles, dateRange: range, rssArticles };
     }),
 
     // Get news by date range - auto scrape if empty
@@ -491,7 +512,23 @@ export const appRouter = router({
             scraped = true;
           }
         }
-        return { articles, dateRange: { start: input.startDate, end: input.endDate }, scraped };
+        // Fetch RSS articles for the same date range and translate
+        let rssArticles: any[] = [];
+        try {
+          let customKeywords: Record<string, string[]> | undefined;
+          try {
+            const dbMap = await getActiveRssKeywordMap();
+            if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
+          } catch { customKeywords = undefined; }
+          const rssResult = await fetchRssNews(undefined, 30, customKeywords, { start: input.startDate, end: input.endDate });
+          if (rssResult.articles.length > 0) {
+            rssArticles = await translateRssArticles(rssResult.articles);
+          }
+        } catch (rssErr) {
+          console.error("[byDateRange] RSS fetch failed:", rssErr);
+        }
+
+        return { articles, dateRange: { start: input.startDate, end: input.endDate }, scraped, rssArticles };
       }),
 
     // Get all news with pagination
@@ -545,8 +582,10 @@ export const appRouter = router({
             const dbMap = await getActiveRssKeywordMap();
             if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
           } catch { customKeywords = undefined; }
-          const rssResult = await fetchRssNews(undefined, 2, customKeywords);
-          rssArticles = rssResult.articles;
+          const rssResult = await fetchRssNews(undefined, 30, customKeywords, { start: input.startDate, end: input.endDate });
+          if (rssResult.articles.length > 0) {
+            rssArticles = await translateRssArticles(rssResult.articles);
+          }
         } catch (rssErr) {
           console.error("[sendEmail] RSS fetch failed:", rssErr);
         }
@@ -581,8 +620,10 @@ export const appRouter = router({
             const dbMap = await getActiveRssKeywordMap();
             if (Object.keys(dbMap).length > 0) customKeywords = dbMap;
           } catch { customKeywords = undefined; }
-          const rssResult = await fetchRssNews(undefined, 2, customKeywords);
-          rssArticles = rssResult.articles;
+          const rssResult = await fetchRssNews(undefined, 30, customKeywords, { start: input.startDate, end: input.endDate });
+          if (rssResult.articles.length > 0) {
+            rssArticles = await translateRssArticles(rssResult.articles);
+          }
         } catch (rssErr) {
           console.error("[emailPreview] RSS fetch failed:", rssErr);
         }
@@ -909,6 +950,9 @@ export const appRouter = router({
         z.object({
           topics: z.array(z.string()).optional(),
           maxAgeDays: z.number().int().min(1).max(90).optional().default(30),
+          startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+          translate: z.boolean().optional().default(true),
         }).optional()
       )
       .query(async ({ input }) => {
@@ -920,11 +964,24 @@ export const appRouter = router({
         } catch {
           customKeywords = undefined;
         }
+        // Build date range if provided
+        const dateRange = input?.startDate && input?.endDate
+          ? { start: input.startDate, end: input.endDate }
+          : undefined;
         const result = await fetchRssNews(
           input?.topics && input.topics.length > 0 ? input.topics : undefined,
           input?.maxAgeDays ?? 30,
-          customKeywords
+          customKeywords,
+          dateRange
         );
+        // Translate titles to Chinese if requested
+        if (input?.translate !== false && result.articles.length > 0) {
+          try {
+            result.articles = await translateRssArticles(result.articles);
+          } catch (err) {
+            console.error("[RSS] Translation failed:", err);
+          }
+        }
         return result;
       }),
 

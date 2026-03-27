@@ -234,6 +234,7 @@ function KeywordPanel({
 // ─── Article Card ───────────────────────────────────────────
 function RssArticleCard({
   title,
+  titleChinese,
   description,
   url,
   publishDate,
@@ -244,6 +245,7 @@ function RssArticleCard({
   topicLabels,
 }: {
   title: string;
+  titleChinese?: string;
   description: string;
   url: string;
   publishDate: string;
@@ -265,14 +267,21 @@ function RssArticleCard({
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              className="font-semibold text-foreground hover:text-primary transition-colors line-clamp-2 text-sm leading-snug block mb-2"
+              className="font-semibold text-foreground hover:text-primary transition-colors line-clamp-2 text-sm leading-snug block"
             >
               {title}
             </a>
 
+            {/* Chinese translation */}
+            {titleChinese && (
+              <p className="text-sm text-muted-foreground mt-0.5 leading-snug">
+                {titleChinese}
+              </p>
+            )}
+
             {/* Description */}
             {description && (
-              <p className="text-xs text-muted-foreground line-clamp-2 mb-3">
+              <p className="text-xs text-muted-foreground/70 line-clamp-2 mt-1 mb-3">
                 {description}
               </p>
             )}
@@ -340,13 +349,23 @@ export default function RssSearch() {
   const [maxAgeDays, setMaxAgeDays] = useState(30);
   const [searchEnabled, setSearchEnabled] = useState(false);
   const [showKeywordManager, setShowKeywordManager] = useState(false);
+  const [dateMode, setDateMode] = useState<"days" | "range">("days");
+  const [rssStartDate, setRssStartDate] = useState("");
+  const [rssEndDate, setRssEndDate] = useState("");
 
   // Fetch topics list
   const topicsQuery = trpc.rss.topics.useQuery();
 
   // Fetch RSS articles
   const rssQuery = trpc.rss.search.useQuery(
-    { topics: selectedTopics, maxAgeDays },
+    {
+      topics: selectedTopics,
+      maxAgeDays,
+      ...(dateMode === "range" && rssStartDate && rssEndDate
+        ? { startDate: rssStartDate, endDate: rssEndDate }
+        : {}),
+      translate: true,
+    },
     {
       enabled: searchEnabled,
       staleTime: 5 * 60 * 1000,
@@ -511,27 +530,74 @@ export default function RssSearch() {
 
             {/* Time range */}
             <div>
-              <p className="text-sm font-medium mb-2 text-muted-foreground">时间范围</p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { label: "近 7 天",  value: 7 },
-                  { label: "近 14 天", value: 14 },
-                  { label: "近 30 天", value: 30 },
-                  { label: "近 60 天", value: 60 },
-                ].map((opt) => (
+              <div className="flex items-center gap-3 mb-2">
+                <p className="text-sm font-medium text-muted-foreground">时间范围</p>
+                <div className="flex gap-1 bg-muted rounded-md p-0.5">
                   <button
-                    key={opt.value}
-                    onClick={() => setMaxAgeDays(opt.value)}
-                    className={`px-3 py-1.5 rounded-md text-sm border transition-all ${
-                      maxAgeDays === opt.value
-                        ? "bg-primary text-primary-foreground border-primary shadow-sm"
-                        : "bg-background border-border text-muted-foreground hover:border-primary/50"
+                    onClick={() => setDateMode("days")}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                      dateMode === "days"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
                     }`}
                   >
-                    {opt.label}
+                    快捷选择
                   </button>
-                ))}
+                  <button
+                    onClick={() => setDateMode("range")}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
+                      dateMode === "range"
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    自定义日期
+                  </button>
+                </div>
               </div>
+              {dateMode === "days" ? (
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { label: "近 7 天",  value: 7 },
+                    { label: "近 14 天", value: 14 },
+                    { label: "近 30 天", value: 30 },
+                    { label: "近 60 天", value: 60 },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setMaxAgeDays(opt.value)}
+                      className={`px-3 py-1.5 rounded-md text-sm border transition-all ${
+                        maxAgeDays === opt.value
+                          ? "bg-primary text-primary-foreground border-primary shadow-sm"
+                          : "bg-background border-border text-muted-foreground hover:border-primary/50"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1">
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">开始日期</label>
+                    <input
+                      type="date"
+                      value={rssStartDate}
+                      onChange={(e) => setRssStartDate(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">结束日期</label>
+                    <input
+                      type="date"
+                      value={rssEndDate}
+                      onChange={(e) => setRssEndDate(e.target.value)}
+                      className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Search button */}

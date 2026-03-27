@@ -712,6 +712,7 @@ export function generateEmailHtml(
   dateRange?: { start: string; end: string },
   rssArticles?: Array<{
     title: string;
+    titleChinese?: string;
     description: string;
     url: string;
     publishDate: string;
@@ -753,6 +754,8 @@ export function generateEmailHtml(
       <td style="padding:12px 8px;">
         <a href="${a.url}" style="color:#1a56db;text-decoration:none;font-weight:600;">${a.title}</a>
         <br/>
+        <span style="color:#666;font-size:13px;">${a.titleChinese || ''}</span>
+        ${a.titleChinese ? '<br/>' : ''}
         <span style="color:#888;font-size:12px;">${a.description ? a.description.slice(0, 120) + (a.description.length > 120 ? '...' : '') : ''}</span>
       </td>
       <td style="padding:12px 8px;white-space:nowrap;color:#666;font-size:13px;">${a.publishDate}</td>
