@@ -428,6 +428,24 @@ export const appRouter = router({
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
     }),
+    // Check if password protection is enabled
+    passwordRequired: publicProcedure.query(() => {
+      const sitePassword = ENV.sitePassword;
+      return { required: !!sitePassword && sitePassword.length > 0 };
+    }),
+    // Verify the access password
+    verifyPassword: publicProcedure
+      .input(z.object({ password: z.string() }))
+      .mutation(({ input }) => {
+        const sitePassword = ENV.sitePassword;
+        if (!sitePassword || sitePassword.length === 0) {
+          return { success: true };
+        }
+        if (input.password === sitePassword) {
+          return { success: true };
+        }
+        return { success: false, error: "密码错误，请重试" };
+      }),
   }),
 
   news: router({
